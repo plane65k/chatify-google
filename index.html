@@ -79,7 +79,10 @@
         }
         .transition-overlay.expand {animation:expandButton 2.8s cubic-bezier(0.4,0,0.2,1) forwards}
         @keyframes expandButton {0%{transform:scale(0);border-radius:50%}50%{transform:scale(3);border-radius:30%}100%{transform:scale(10);border-radius:0}}
-
+@keyframes ghostPulse {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 0.3; }
+}
         /* ---------- Login screen (Chatify public style) ---------- */
         #pinOverlay {
             position: fixed;inset:0;display:flex;align-items:center;justify-content:center;
@@ -374,6 +377,10 @@
                 <input id="spaceIdInput" placeholder="spaces/AAQAYTPGL6I" autocomplete="off" />
             </div>
             <div class="input-group">
+    <label>Password</label>
+    <input id="passwordInput" type="password" placeholder="Your password" autocomplete="current-password" />
+</div>
+            <div class="input-group">
                 <label>Display name (optional)</label>
                 <input id="displayNameInput" placeholder="You" autocomplete="off" />
             </div>
@@ -462,9 +469,10 @@
     /* ============================================================
        State
        ============================================================ */
-    let USER_EMAIL = '';
-    let SPACE_ID = '';
-    let DISPLAY_NAME = 'You';
+   let USER_EMAIL = '';
+let SPACE_ID = '';
+let DISPLAY_NAME = 'You';
+let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
     let messages = [];
     let displayed = new Set();
     let pollTimer = null;
@@ -560,36 +568,43 @@
     displayNameInput.value = localStorage.getItem('cg_name') || '';
 
     pinBtn.addEventListener('click', async () => {
-        const email = emailInput.value.trim().toLowerCase();
-        const space = spaceIdInput.value.trim();
-        const name = displayNameInput.value.trim() || 'You';
+    const email = emailInput.value.trim().toLowerCase();
+    const password = document.getElementById('passwordInput').value;
+    const space = spaceIdInput.value.trim();
+    const name = displayNameInput.value.trim() || 'You';
 
-        if (!email || !email.includes('@')) { alert('Enter your Google email'); return; }
-        if (!space || !space.startsWith('spaces/')) { alert('Enter a Space ID like spaces/AAQAYTPGL6I'); return; }
+    if (!email || !email.includes('@')) { alert('Enter your Google email'); return; }
+    if (!password) { alert('Enter your password'); return; }
+    if (!space || !space.startsWith('spaces/')) { alert('Enter a Space ID like spaces/AAQAYTPGL6I'); return; }
+
+    pinBtn.textContent = 'Signing in...';
+    pinBtn.disabled = true;
+
+    try {
+        const loginRes = await fetch(`${WORKER_URL}/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const loginData = await loginRes.json();
+        if (!loginRes.ok || !loginData.token) {
+            throw new Error(loginData.error || 'Login failed');
+        }
+
+        SESSION_TOKEN = loginData.token;
+        sessionStorage.setItem('cg_token', SESSION_TOKEN);
 
         USER_EMAIL = email;
         SPACE_ID = space;
         DISPLAY_NAME = name;
-
         localStorage.setItem('cg_email', USER_EMAIL);
         localStorage.setItem('cg_space', SPACE_ID);
         localStorage.setItem('cg_name', DISPLAY_NAME);
 
-        pinBtn.textContent = 'Connecting...';
-        pinBtn.disabled = true;
-
-        try {
-            const raw = await fetchMessages();
-            if (!Array.isArray(raw)) throw new Error('Worker did not return messages');
-        } catch (e) {
-            alert('Could not connect:\n' + errorToString(e));
-            pinBtn.textContent = 'Enter Chat';
-            pinBtn.disabled = false;
-            return;
-        }
+        const raw = await fetchMessages();
+        if (!Array.isArray(raw)) throw new Error('Worker did not return messages');
 
         playLoginTransition();
-
         setTimeout(async () => {
             pinOverlay.style.display = 'none';
             chatApp.style.display = 'flex';
@@ -598,7 +613,12 @@
             pinBtn.textContent = 'Enter Chat';
             pinBtn.disabled = false;
         }, 1200);
-    });
+    } catch (e) {
+        alert('Could not sign in:\n' + errorToString(e));
+        pinBtn.textContent = 'Enter Chat';
+        pinBtn.disabled = false;
+    }
+});
 
     function playLoginTransition() {
         const overlay = document.getElementById('transitionOverlay');
@@ -617,14 +637,20 @@
        Fetch
        ============================================================ */
     async function fetchMessages() {
-        const url = `${WORKER_URL}/messages?space=${encodeURIComponent(SPACE_ID)}&email=${encodeURIComponent(USER_EMAIL)}&pageSize=200`;
-        const res = await fetch(url);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.error) {
-            throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
+    const url = `${WORKER_URL}/messages?space=${encodeURIComponent(SPACE_ID)}&pageSize=200`;
+    const res = await fetch(url, {
+        headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+        if (res.status === 401) {
+            SESSION_TOKEN = '';
+            sessionStorage.removeItem('cg_token');
         }
-        return data.messages || [];
+        throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
     }
+    return data.messages || [];
+}
 
     function normalizeMessage(m) {
         const senderName = (m.sender && (m.sender.displayName || m.sender.name)) || 'Unknown';
@@ -791,8 +817,9 @@
         await sendToWorker(text, quoted);
     }
 
-    async function sendToWorker(text, quoted = null) {
+                async function sendToWorker(text, quoted = null) {
         const tempId = 'temp-' + makeId();
+        
         const optimistic = {
             id: tempId,
             username: DISPLAY_NAME,
@@ -803,34 +830,65 @@
             reactions: [],
             quoted: quoted ? { name: quoted.msgId, snippet: quoted.snippet } : null
         };
+        
         messages.push(optimistic);
         renderOneMessage(optimistic, true);
+        
+        // Turn it into a Ghost
+        let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
+        if (tempEl) {
+            tempEl.style.opacity = '0.55';
+            tempEl.style.animation = 'ghostPulse 1.4s ease-in-out infinite';
+        }
+
         chatDiv.scrollTop = chatDiv.scrollHeight;
 
         try {
-            const payload = { space: SPACE_ID, text: text, email: USER_EMAIL };
+            const payload = { space: SPACE_ID, text: text };
             if (quoted) payload.quotedMessageName = quoted.msgId;
 
             const res = await fetch(`${WORKER_URL}/send`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + SESSION_TOKEN
+                },
                 body: JSON.stringify(payload)
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
 
+            // Solidify the message instantly WITHOUT refreshing the whole screen
+            if (tempEl) {
+                tempEl.style.opacity = '1';
+                tempEl.style.animation = 'none';
+                // Update the ID to the real Google message ID
+                if (data.message && data.message.name) {
+                    tempEl.dataset.id = data.message.name;
+                }
+            }
+
+            // Update our local state array so the next background poll doesn't duplicate it
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
-            const el = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
-            if (el) el.remove();
+            if (data.message) {
+                const realMsg = normalizeMessage(data.message);
+                messages.push(realMsg);
+                displayed.add(realMsg.id);
+            }
 
-            await loadMessages();
         } catch (e) {
             showNotifyBanner('Send failed: ' + errorToString(e));
+            
+            if (tempEl) {
+                tempEl.style.animation = 'none';
+                tempEl.style.background = '#d32f2f';
+                tempEl.style.opacity = '1';
+                setTimeout(() => tempEl.remove(), 1500);
+            }
+
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
-            const el = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
-            if (el) el.remove();
         }
     }
 
@@ -843,8 +901,7 @@
     imageInput.style.display = 'none';
     document.body.appendChild(imageInput);
 
-    imageBtn.addEventListener('click', () => imageInput.click());
-    imageInput.addEventListener('change', async (e) => {
+        imageInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         if (file.size > 200 * 1024 * 1024) { showNotifyBanner('Image too large (max 200MB)'); imageInput.value = ''; return; }
@@ -863,10 +920,12 @@
 
             const uploadRes = await fetch(`${WORKER_URL}/upload`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + SESSION_TOKEN
+                },
                 body: JSON.stringify({
                     space: SPACE_ID,
-                    email: USER_EMAIL,
                     filename: file.name,
                     mimeType: file.type,
                     data: base64
@@ -877,10 +936,12 @@
 
             const sendRes = await fetch(`${WORKER_URL}/send`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + SESSION_TOKEN
+                },
                 body: JSON.stringify({
                     space: SPACE_ID,
-                    email: USER_EMAIL,
                     text: '',
                     attachment: uploadData.attachment
                 })
@@ -914,10 +975,13 @@
 
         try {
             const res = await fetch(`${WORKER_URL}/react`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ space: SPACE_ID, message: messageId, email: USER_EMAIL, emoji: emoji })
-            });
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + SESSION_TOKEN
+    },
+    body: JSON.stringify({ message: messageId, emoji: emoji })
+});
             if (!res.ok) throw new Error('Reaction failed');
         } catch (e) {
             showNotifyBanner('Reaction failed: ' + errorToString(e));
@@ -1024,11 +1088,13 @@
        ============================================================ */
     refreshBtn.addEventListener('click', () => loadMessages());
     signoutBtn.addEventListener('click', () => {
-        stopPolling();
-        chatApp.style.display = 'none';
-        pinOverlay.style.display = 'flex';
-        messages = []; displayed.clear(); chatDiv.innerHTML = '';
-    });
+    stopPolling();
+    SESSION_TOKEN = '';
+    sessionStorage.removeItem('cg_token');
+    chatApp.style.display = 'none';
+    pinOverlay.style.display = 'flex';
+    messages = []; displayed.clear(); chatDiv.innerHTML = '';
+});
 
     /* ============================================================
        GIF keyboard (GIPHY)
@@ -1323,26 +1389,30 @@
     /* ============================================================
        Auto-resume
        ============================================================ */
-    (async function autoResume() {
-        const email = localStorage.getItem('cg_email');
-        const space = localStorage.getItem('cg_space');
-        const name = localStorage.getItem('cg_name');
-        if (!email || !space) return;
+(async function autoResume() {
+    const email = localStorage.getItem('cg_email');
+    const space = localStorage.getItem('cg_space');
+    const name = localStorage.getItem('cg_name');
+    const token = sessionStorage.getItem('cg_token');
+    if (!email || !space || !token) return;
 
-        USER_EMAIL = email;
-        SPACE_ID = space;
-        DISPLAY_NAME = name || 'You';
+    USER_EMAIL = email;
+    SPACE_ID = space;
+    DISPLAY_NAME = name || 'You';
+    SESSION_TOKEN = token;
 
-        try {
-            const raw = await fetchMessages();
-            if (!Array.isArray(raw)) return;
-            pinOverlay.style.display = 'none';
-            chatApp.style.display = 'flex';
-            await loadMessages();
-            startPolling();
-        } catch (e) { /* stay on login */ }
-    })();
-
+    try {
+        const raw = await fetchMessages();
+        if (!Array.isArray(raw)) return;
+        pinOverlay.style.display = 'none';
+        chatApp.style.display = 'flex';
+        await loadMessages();
+        startPolling();
+    } catch (e) {
+        sessionStorage.removeItem('cg_token');
+        SESSION_TOKEN = '';
+    }
+})();
     console.log('Chatify-Google loaded');
 </script>
 
