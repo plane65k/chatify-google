@@ -374,7 +374,7 @@
             </div>
             <div class="input-group">
                 <label>Space ID</label>
-                <input id="spaceIdInput" placeholder="spaces/AAQAYTPGL6I" autocomplete="off" />
+                <input id="spaceIdInput" placeholder="spaces/AAAAxxxxx" autocomplete="off" />
             </div>
             <div class="input-group">
     <label>Password</label>
@@ -469,10 +469,11 @@
     /* ============================================================
        State
        ============================================================ */
-   let USER_EMAIL = '';
+  let USER_EMAIL = '';
 let SPACE_ID = '';
 let DISPLAY_NAME = 'You';
 let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
+let MY_AVATAR = ''; // <--- ADD THIS
     let messages = [];
     let displayed = new Set();
     let pollTimer = null;
@@ -652,7 +653,7 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
     return data.messages || [];
 }
 
-    function normalizeMessage(m) {
+        function normalizeMessage(m) {
         const senderName = (m.sender && (m.sender.displayName || m.sender.name)) || 'Unknown';
         const senderEmail = (m.sender && m.sender.email) || '';
         const senderAvatar = (m.sender && m.sender.avatarUrl) || '';
@@ -672,7 +673,11 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
 
         let quoted = null;
         if (m.quotedMessageMetadata) {
-            quoted = { name: m.quotedMessageMetadata.name, snippet: '' };
+            quoted = { 
+                name: m.quotedMessageMetadata.name, 
+                snippet: (m.quotedMessageSnapshot && m.quotedMessageSnapshot.text) || 'Quoted message',
+                lastUpdateTime: m.quotedMessageMetadata.lastUpdateTime || m.createTime 
+            };
         }
 
         return {
@@ -692,11 +697,19 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
     /* ============================================================
        Load / render
        ============================================================ */
-    async function loadMessages() {
+        async function loadMessages() {
         loadingDiv.style.display = 'flex';
         try {
             const raw = await fetchMessages();
             const list = raw.slice().reverse().map(normalizeMessage);
+            
+            // --- ADD THIS 3 LINES ---
+            if (!MY_AVATAR) {
+                const myMsg = list.find(m => m.isMine && m.avatarUrl);
+                if (myMsg) MY_AVATAR = myMsg.avatarUrl;
+            }
+            // ------------------------
+
             messages = list;
             renderAll(false);
             requestAnimationFrame(() => { chatDiv.scrollTop = chatDiv.scrollHeight; });
@@ -722,7 +735,7 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
         el.className = 'message ' + (msg.isMine ? 'myMessage' : 'otherMessage');
         el.dataset.id = msg.id;
 
-        const avatarUrl = msg.avatarUrl || 'https://www.thisiscolossal.com/wp-content/uploads/2024/01/spherewave.gif';
+        const avatarUrl = msg.avatarUrl || MY_AVATAR;
 
         let contentHtml = '';
         if (msg.attachment) {
@@ -783,11 +796,17 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
             });
         });
 
-        const replyEl = el.querySelector('.reply-btn');
+                const replyEl = el.querySelector('.reply-btn');
         if (replyEl) {
             replyEl.addEventListener('click', (e) => {
                 e.stopPropagation();
-                replyContext = { msgId: msg.id, username: msg.username, snippet: (msg.message || '').substring(0, 60) };
+                // Google requires lastUpdateTime for quotedMessageMetadata
+                replyContext = { 
+                    msgId: msg.id, 
+                    username: msg.username, 
+                    snippet: (msg.message || '').substring(0, 60),
+                    lastUpdateTime: msg.quoted?.lastUpdateTime || msg.lastUpdateTime || new Date().toISOString()
+                };
                 messageInput.placeholder = `Replying to ${msg.username}...`;
                 messageInput.focus();
             });
@@ -823,6 +842,7 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
         const optimistic = {
             id: tempId,
             username: DISPLAY_NAME,
+            avatarUrl: MY_AVATAR, // <--- USE YOUR PFP HERE
             avatarUrl: '',
             message: text,
             timestamp: formatTime(new Date().toISOString()),
@@ -845,7 +865,10 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
 
         try {
             const payload = { space: SPACE_ID, text: text };
-            if (quoted) payload.quotedMessageName = quoted.msgId;
+            if (quoted) {
+              payload.quotedMessageName = quoted.msgId;
+              
+            }
 
             const res = await fetch(`${WORKER_URL}/send`, {
                 method: 'POST',
@@ -1399,6 +1422,7 @@ let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
     USER_EMAIL = email;
     SPACE_ID = space;
     DISPLAY_NAME = name || 'You';
+    MY_AVATAR = ''; // Reset for new login
     SESSION_TOKEN = token;
 
     try {
