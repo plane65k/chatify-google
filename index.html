@@ -479,6 +479,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
     let pollTimer = null;
     let isPolling = false;
     let replyContext = null;
+    let isSendingMessage = false; // <--- ADD THIS LINE
 
     const chatDiv = document.getElementById('chat');
     const chatApp = document.getElementById('chatApp');
@@ -653,7 +654,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
     return data.messages || [];
 }
 
-        function normalizeMessage(m) {
+    function normalizeMessage(m) {
         const senderName = (m.sender && (m.sender.displayName || m.sender.name)) || 'Unknown';
         const senderEmail = (m.sender && m.sender.email) || '';
         const senderAvatar = (m.sender && m.sender.avatarUrl) || '';
@@ -672,13 +673,15 @@ let MY_AVATAR = ''; // <--- ADD THIS
         if (!body && m.attachedGifs && m.attachedGifs.length) body = '[GIF]';
 
         let quoted = null;
-        if (m.quotedMessageMetadata) {
-            quoted = { 
-                name: m.quotedMessageMetadata.name, 
-                snippet: (m.quotedMessageSnapshot && m.quotedMessageSnapshot.text) || 'Quoted message',
-                lastUpdateTime: m.quotedMessageMetadata.lastUpdateTime || m.createTime 
-            };
-        }
+    if (m.quotedMessageMetadata) {
+        // CORRECT PATH: quotedMessageMetadata.quotedMessageSnapshot.text
+        const snapshot = m.quotedMessageMetadata.quotedMessageSnapshot || {};
+        quoted = { 
+            name: m.quotedMessageMetadata.name, 
+            snippet: snapshot.text || '',  // <-- Text lives here
+            lastUpdateTime: m.quotedMessageMetadata.lastUpdateTime || m.createTime 
+        };
+    }
 
         return {
             id: m.name || makeId(),
@@ -690,7 +693,8 @@ let MY_AVATAR = ''; // <--- ADD THIS
             timestamp: formatTime(m.createTime),
             isMine: !!isMine,
             reactions: m.reactions || [],
-            quoted: quoted
+            quoted: quoted,
+            rawUpdateTime: m.lastUpdateTime || m.createTime 
         };
     }
 
@@ -727,7 +731,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
         if (scrollBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
     }
 
-    function renderOneMessage(msg, live) {
+        function renderOneMessage(msg, live) {
         if (displayed.has(msg.id)) return;
         displayed.add(msg.id);
 
@@ -751,7 +755,10 @@ let MY_AVATAR = ''; // <--- ADD THIS
 
         let quotedHtml = '';
         if (msg.quoted) {
-            quotedHtml = `<div class="quoted-block"><span class="quoted-author">Replying to</span> <span style="opacity:0.7;">message ${escapeHtml(msg.quoted.name.split('/').pop())}</span></div>`;
+            // Show the text if we have it, otherwise show "Replying to [Name]"
+            const preview = msg.quoted.snippet || 'Original message';
+            const author = msg.quoted.snippet ? 'Replying to' : 'Replying to';
+            quotedHtml = `<div class="quoted-block"><span class="quoted-author">${author}</span> <span style="opacity:0.7;">${escapeHtml(preview)}</span></div>`;
         }
 
         let reactionsHtml = '';
@@ -796,16 +803,15 @@ let MY_AVATAR = ''; // <--- ADD THIS
             });
         });
 
-                const replyEl = el.querySelector('.reply-btn');
+        const replyEl = el.querySelector('.reply-btn');
         if (replyEl) {
             replyEl.addEventListener('click', (e) => {
                 e.stopPropagation();
-                // Google requires lastUpdateTime for quotedMessageMetadata
                 replyContext = { 
                     msgId: msg.id, 
                     username: msg.username, 
                     snippet: (msg.message || '').substring(0, 60),
-                    lastUpdateTime: msg.quoted?.lastUpdateTime || msg.lastUpdateTime || new Date().toISOString()
+                    lastUpdateTime: msg.rawUpdateTime 
                 };
                 messageInput.placeholder = `Replying to ${msg.username}...`;
                 messageInput.focus();
@@ -817,7 +823,6 @@ let MY_AVATAR = ''; // <--- ADD THIS
             if (nearBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
         }
     }
-
     /* ============================================================
        Send
        ============================================================ */
@@ -836,14 +841,14 @@ let MY_AVATAR = ''; // <--- ADD THIS
         await sendToWorker(text, quoted);
     }
 
-                async function sendToWorker(text, quoted = null) {
+    async function sendToWorker(text, quoted = null) {
+        isSendingMessage = true; // LOCK POLLING
         const tempId = 'temp-' + makeId();
         
         const optimistic = {
             id: tempId,
             username: DISPLAY_NAME,
-            avatarUrl: MY_AVATAR, // <--- USE YOUR PFP HERE
-            avatarUrl: '',
+            avatarUrl: MY_AVATAR, 
             message: text,
             timestamp: formatTime(new Date().toISOString()),
             isMine: true,
@@ -866,8 +871,8 @@ let MY_AVATAR = ''; // <--- ADD THIS
         try {
             const payload = { space: SPACE_ID, text: text };
             if (quoted) {
-              payload.quotedMessageName = quoted.msgId;
-              
+                payload.quotedMessageName = quoted.msgId;
+                payload.quotedLastUpdateTime = quoted.lastUpdateTime; 
             }
 
             const res = await fetch(`${WORKER_URL}/send`, {
@@ -881,17 +886,24 @@ let MY_AVATAR = ''; // <--- ADD THIS
             const data = await res.json().catch(() => ({}));
             if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
 
-            // Solidify the message instantly WITHOUT refreshing the whole screen
+            // SUCCESS: Solidify the message immediately.
             if (tempEl) {
                 tempEl.style.opacity = '1';
-                tempEl.style.animation = 'none';
-                // Update the ID to the real Google message ID
+                tempEl.style.animation = 'none'; // Stops the ghost pulse perfectly
+                
+                // Update the ghost DOM element to match the real message so it doesn't vanish
                 if (data.message && data.message.name) {
                     tempEl.dataset.id = data.message.name;
+                    
+                    // Update the username from "You" to the actual Google Account name
+                    if (data.message.sender && data.message.sender.displayName) {
+                        const nameEl = tempEl.querySelector('strong');
+                        if (nameEl) nameEl.textContent = data.message.sender.displayName;
+                    }
                 }
             }
 
-            // Update our local state array so the next background poll doesn't duplicate it
+            // Update the local array silently so the next poll doesn't duplicate it
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
             if (data.message) {
@@ -903,6 +915,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
         } catch (e) {
             showNotifyBanner('Send failed: ' + errorToString(e));
             
+            // If it fails, turn red and remove
             if (tempEl) {
                 tempEl.style.animation = 'none';
                 tempEl.style.background = '#d32f2f';
@@ -912,6 +925,8 @@ let MY_AVATAR = ''; // <--- ADD THIS
 
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
+        } finally {
+            isSendingMessage = false; // UNLOCK POLLING
         }
     }
 
@@ -1083,6 +1098,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
         stopPolling();
         pollTimer = setInterval(async () => {
             if (isPolling) return;
+            if (isSendingMessage) return;
             isPolling = true;
             try {
                 const raw = await fetchMessages();
