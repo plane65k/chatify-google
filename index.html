@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Chatify-Google</title>
+<style>
+:root {
+  --background-color: #f5f5f5;
+  --text-color: #333333;
+  --card-background: #ffffff;
+  --button-background: #4caf50;
+  --button-text: #ffffff;
+  --secondary-background: #fafafa;
+  --border-color: #ccc;
+  --shadow-color: rgba(0,0,0,0.2);
+  --message-my-background: #4caf50;
+  --message-my-text: #ffffff;
+  --message-other-background: #e0e0e0;
+  --message-other-text: #000000;
+  --overlay-background: rgba(0,0,0,0.4);
+  --transition-time: 0.4s;
+}
+[data-theme="dark"] {
+  --background-color: #1a1a1a;
+  --text-color: #ffffff;
+  --card-background: #2c2c2c;
+  --button-background: #45a049;
+  --button-text: #ffffff;
+  --secondary-background: #333333;
+  --border-color: #555555;
+  --shadow-color: rgba(255,255,255,0.1);
+  --message-my-background: #45a049;
+  --message-my-text: #ffffff;
+  --message-other-background: #4a4a4a;
+  --message-other-text: #ffffff;
+  --overlay-background: rgba(255,255,255,0.2);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;font-family:Roboto,system-ui,sans-serif;background:var(--background-color);color:var(--text-color);display:flex;flex-direction:column}
+
+/* LOGIN */
+#pinOverlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--background-color);z-index:100;padding:40px 20px}
+#pinBox{display:flex;background:var(--card-background);border-radius:28px;width:94%;max-width:900px;min-height:460px;max-height:92vh;box-shadow:0 25px 60px rgba(0,0,0,0.2);overflow:hidden;border:1px solid var(--border-color)}
+.pin-left{flex:1 1 55%;padding:32px;display:flex;flex-direction:column;justify-content:center;background:var(--card-background);min-width:280px;overflow-y:auto}
+.pin-left .logo-area{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.pin-left .logo-area img{height:36px}
+.pin-left .logo-area h1{font-size:24px;font-weight:700;margin:0}
+.pin-left .welcome-text{font-size:13px;opacity:0.7;margin-bottom:16px;line-height:1.5}
+.pin-left .input-group{margin-bottom:10px}
+.pin-left .input-group label{display:block;font-size:11px;font-weight:600;margin-bottom:3px;opacity:0.8}
+.pin-left .input-group input{width:100%;padding:10px 14px;border-radius:12px;border:2px solid var(--border-color);background:var(--secondary-background);color:var(--text-color);font-size:13px;box-sizing:border-box;font-family:inherit}
+.pin-left .input-group input:focus{outline:none;border-color:var(--button-background);box-shadow:0 0 0 3px rgba(76,175,80,0.12)}
+#pinBtn{width:100%;padding:12px;border-radius:30px;font-size:15px;font-weight:600;margin-top:8px;background:var(--button-background);color:var(--button-text);border:none;cursor:pointer}
+#pinBtn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 20px rgba(76,175,80,.3)}
+#pinBtn:disabled{opacity:.65;cursor:wait}
+.setup-box{margin:8px 0 12px 0;border:1px solid var(--border-color);border-radius:10px;padding:10px 12px;max-height:220px;overflow-y:auto;background:var(--secondary-background);font-size:11px;line-height:1.6}
+.setup-box code{background:rgba(0,0,0,.08);padding:1px 4px;border-radius:4px;font-size:10px;word-break:break-all}
+[data-theme="dark"] .setup-box code{background:rgba(255,255,255,.1)}
+.setup-box ol{padding-left:18px;margin:6px 0}
+.setup-box summary{cursor:pointer;font-weight:700;font-size:12px;margin-bottom:6px}
+.pin-right{flex:1 1 45%;padding:0;display:flex;flex-direction:column;justify-content:center;align-items:center;background:linear-gradient(145deg,#2e7d32 0%,#1b5e20 50%,#0d3b0f 100%);color:#fff;text-align:center;position:relative;overflow:hidden;min-width:220px;border-radius:0 28px 28px 0}
+.pin-right::before{content:'';position:absolute;inset:0;background:url('https://i.pinimg.com/736x/97/5c/51/975c519ab0bec63a622623ae129681ef.jpg') center/cover;opacity:.2;z-index:0}
+.pin-right .brand-content{position:relative;z-index:1;padding:28px 24px;max-width:340px}
+.pin-right h2{font-size:1.8rem;font-weight:800;margin:0 0 6px 0}
+.pin-right .tagline{font-size:.9rem;opacity:.85;margin:0 0 14px 0}
+.pin-right .brand-footer{position:relative;z-index:1;margin-top:14px;font-size:10px;opacity:.4}
+@media (max-width:768px){#pinBox{flex-direction:column;width:95%;max-height:95vh;border-radius:24px;min-height:auto}.pin-left{padding:24px 18px;flex:none;order:2}.pin-right{flex:none;min-height:150px;padding:20px 16px;border-radius:24px 24px 0 0;order:1;min-width:unset}.pin-right h2{font-size:1.4rem}}
+
+/* APP */
+#chatApp{display:none;width:100%;height:100vh;overflow:hidden;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;padding:13px 24px;background:var(--button-background);color:var(--button-text);font-weight:700;flex-shrink:0;border-radius:50px;box-shadow:0 8px 32px rgba(0,0,0,.35);position:absolute;z-index:10;width:95%;max-width:1200px;margin:0;top:13px;left:50%;transform:translateX(-50%);transition:width .25s ease}
+header.scrolled{width:50%;max-width:150px;height:50px}
+header.scrolled .header-actions{display:none!important}
+.header-actions{display:flex;gap:10px;align-items:center}
+.button-clear{background:none;border:none;color:var(--button-text);cursor:pointer;font-weight:600;font-size:13px}
+#chat{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px;background:var(--secondary-background);height:calc(100vh - 140px);margin-top:80px}
+.message{max-width:72%;padding:12px 14px;border-radius:20px;font-size:14px;position:relative;word-break:break-word;display:flex;align-items:center}
+.myMessage{align-self:flex-end;background:var(--message-my-background);color:var(--message-my-text);border-bottom-right-radius:6px}
+.otherMessage{align-self:flex-start;background:var(--message-other-background);color:var(--message-other-text);border-bottom-left-radius:6px}
+.timestamp{display:block;font-size:10px;color:var(--text-color);margin-top:4px;text-align:right;opacity:.7;width:100%}
+footer{display:flex;padding:5px;border-top:1px solid var(--border-color);background:var(--card-background);flex-shrink:0;border-radius:50px;margin:5px;gap:6px;align-items:center}
+footer input{flex:1;padding:12px;border-radius:24px;border:1px solid var(--border-color);margin-right:10px;background:transparent;color:var(--text-color);font-size:14px}
+.gif-btn,.image-btn{background:rgba(69,190,74,.8);border:none;color:#fff;font-size:1.2rem;padding:.6rem;width:2.6rem;height:2.6rem;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#sendBtn{display:flex;align-items:center;justify-content:center;background:rgba(69,190,74,.8);border:none;color:#fff;font-size:1.3rem;padding:.6rem;width:2.6rem;height:2.6rem;border-radius:50%;cursor:pointer;flex-shrink:0}
+
+/* GIF keyboard */
+.gif-keyboard{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:90%;max-width:500px;min-width:280px;height:400px;max-height:70vh;background:var(--card-background);border-radius:20px;border:1px solid var(--border-color);box-shadow:0 8px 32px var(--shadow-color);display:none;flex-direction:column;z-index:200;overflow:hidden}
+.gif-keyboard-header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-color);flex-shrink:0}
+.gif-keyboard-header h4{margin:0;font-size:16px}
+.close-gif-btn{background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-color);padding:0 8px}
+.gif-search-container{padding:12px;flex-shrink:0}
+.gif-search-input{width:100%;padding:8px 12px;border-radius:25px;border:1px solid var(--border-color);background:var(--secondary-background);color:var(--text-color);font-size:14px;box-sizing:border-box}
+.gif-results{flex:1;overflow-y:auto;padding:12px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:flex-start;min-height:200px}
+.gif-result-item{width:calc(33.333% - 8px);min-width:80px;aspect-ratio:1;cursor:pointer;border-radius:12px;overflow:hidden}
+.gif-result-item img{width:100%;height:100%;object-fit:cover}
+.loading-gifs{text-align:center;padding:40px;color:var(--text-color)}
+
+/* modal */
+.profile-modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:var(--overlay-background);z-index:110}
+.profile-modal-content{background:var(--card-background);padding:20px;border-radius:16px;width:min(560px,94%);max-height:85vh;overflow-y:auto;box-shadow:0 8px 30px var(--shadow-color);text-align:center}
+.profile-modal-actions{display:flex;gap:10px;justify-content:center;margin-top:14px}
+.profile-modal-actions button{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+.profile-modal-actions button:first-child{background:#ccc;color:#333}
+.profile-modal-actions button:last-child{background:var(--button-background);color:var(--button-text)}
+
+.notify-banner{position:fixed;left:50%;transform:translate(-50%,-6px);top:76px;background:linear-gradient(90deg,var(--button-background),#2e7d32);color:var(--button-text);padding:12px 18px;border-radius:999px;box-shadow:0 12px 30px var(--shadow-color);z-index:200;display:none;font-size:13px;max-width:90vw;word-break:break-word}
+a{color:#0a66c2;text-decoration:underline}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="pinOverlay">
+  <div id="pinBox">
+    <div class="pin-left">
+      <div class="logo-area">
+        <img src="https://res.cloudinary.com/dceqg5cky/image/upload/SDG_log-removebg-preview_bslq5d.png" alt="Chatify-Google" />
+        <h1>Chatify-Google</h1>
+      </div>
+      <p class="welcome-text">A custom Google Chat client. Each user authorizes once on their phone, then uses their email here.</p>
+
+      <details class="setup-box" open>
+        <summary>📖 Setup instructions</summary>
+        <ol>
+          <li><b>Authorize your Google account</b> on your phone using this link:<br>
+            <a id="authLink" href="#" target="_blank" style="word-break:break-all;font-size:10px;">Loading...</a>
+          </li>
+          <li>Approve Google access. You'll see "✅ Authorization successful!" with your email.</li>
+          <li>Come back here and enter <b>that same email</b> below.</li>
+          <li>Enter your <b>Space ID</b> (from Google Chat URL: <code>.../space/AAAAxxxx</code> → <code>spaces/AAAAxxxx</code>).</li>
+          <li>Click <b>Enter Chat</b>.</li>
+        </ol>
+        <p style="margin:6px 0 0 0;font-size:10px;opacity:.7;">Worker URL: <code>https://wispy-moon-6f4e.1006079-a.workers.dev</code></p>
+      </details>
+
+      <div class="input-group">
+        <label>Your Google Email</label>
+        <input id="emailInput" placeholder="you@gmail.com" autocomplete="email" />
+      </div>
+      <div class="input-group">
+        <label>Space ID</label>
+        <input id="spaceIdInput" placeholder="spaces/AAQAYTPGL6I" autocomplete="off" />
+      </div>
+      <div class="input-group">
+        <label>Display name (optional)</label>
+        <input id="displayNameInput" placeholder="You" autocomplete="off" />
+      </div>
+
+      <button id="pinBtn">Enter Chat</button>
+    </div>
+
+    <div class="pin-right">
+      <div class="brand-content">
+        <h2>Chatting Made Easy</h2>
+        <p class="tagline">Your own Google Chat client, your own rules.</p>
+        <img src="https://res.cloudinary.com/dceqg5cky/image/upload/v1785015423/download_2_zo0yb2.png" alt="title" style="width:260px;height:auto;margin-top:10px;" />
+      </div>
+      <div class="brand-footer">© 2026 Chatify-Google • v1.0</div>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="chatApp">
+  <header>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <img src="https://res.cloudinary.com/dceqg5cky/image/upload/SDG_log-removebg-preview_bslq5d.png" alt="logo" style="height:30px;" />
+      <span>Chatify-Google</span>
+    </div>
+    <div class="header-actions">
+      <button id="toggleThemeBtn" class="button-clear">Toggle Theme</button>
+      <button id="refreshBtn" class="button-clear">Refresh</button>
+      <button id="spaceInfoBtn" class="button-clear">Space Info</button>
+      <button id="signoutBtn" class="button-clear" style="color:salmon">Sign out</button>
+    </div>
+  </header>
+
+  <div id="chat"></div>
+
+  <footer>
+    <input id="messageInput" placeholder="Type a message..." />
+    <button id="gifBtn" class="gif-btn" title="GIFs">🎬</button>
+    <button id="imageBtn" class="image-btn" title="Image">🖼️</button>
+    <button id="sendBtn" title="Send">➤</button>
+  </footer>
+</div>
+
+<!-- GIF keyboard -->
+<div id="gifKeyboard" class="gif-keyboard">
+  <div class="gif-keyboard-header">
+    <h4>🎬 Tenor GIFs</h4>
+    <button class="close-gif-btn" id="closeGifBtn">&times;</button>
+  </div>
+  <div class="gif-search-container">
+    <input type="text" id="gifSearchInput" class="gif-search-input" placeholder="Search GIFs..." />
+  </div>
+  <div id="gifResults" class="gif-results">
+    <div class="loading-gifs">🔍 Search for GIFs above</div>
+  </div>
+</div>
+
+<!-- Space info modal -->
+<div id="spaceModal" class="profile-modal">
+  <div class="profile-modal-content">
+    <h3>Space Info</h3>
+    <p style="font-size:13px;opacity:.8;word-break:break-all;" id="spaceInfoText"></p>
+    <div class="profile-modal-actions">
+      <button id="closeSpaceBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="notifyBanner" class="notify-banner"></div>
+
+<script>
+/* ============================================================
+   STATE
+   ============================================================ */
+const WORKER_URL = 'https://wispy-moon-6f4e.1006079-a.workers.dev';
+const CLIENT_ID = '356546518814-6pr8v6n1l85degcquoeb5hgo9gn5m2gu.apps.googleusercontent.com';
+const REDIRECT_URI = 'https://wispy-moon-6f4e.1006079-a.workers.dev/callback';
+const SCOPES = 'openid email https://www.googleapis.com/auth/chat.messages';
+
+let USER_EMAIL = '';
+let SPACE_ID = '';
+let DISPLAY_NAME = 'You';
+let messages = [];
+let displayed = new Set();
+let pollTimer = null;
+let isPolling = false;
+
+const chatDiv        = document.getElementById('chat');
+const chatApp        = document.getElementById('chatApp');
+const pinOverlay     = document.getElementById('pinOverlay');
+const emailInput     = document.getElementById('emailInput');
+const spaceIdInput   = document.getElementById('spaceIdInput');
+const displayNameInput = document.getElementById('displayNameInput');
+const pinBtn         = document.getElementById('pinBtn');
+const messageInput   = document.getElementById('messageInput');
+const sendBtn        = document.getElementById('sendBtn');
+const refreshBtn     = document.getElementById('refreshBtn');
+const signoutBtn     = document.getElementById('signoutBtn');
+const toggleThemeBtn = document.getElementById('toggleThemeBtn');
+const spaceInfoBtn   = document.getElementById('spaceInfoBtn');
+const spaceModal     = document.getElementById('spaceModal');
+const spaceInfoText  = document.getElementById('spaceInfoText');
+const closeSpaceBtn  = document.getElementById('closeSpaceBtn');
+const notifyBanner   = document.getElementById('notifyBanner');
+const authLink       = document.getElementById('authLink');
+
+/* ============================================================
+   THEME
+   ============================================================ */
+const savedTheme = localStorage.getItem('theme');
+const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+document.documentElement.setAttribute('data-theme', savedTheme || (prefersDark ? 'dark' : 'light'));
+toggleThemeBtn.addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+});
+
+/* ============================================================
+   AUTH LINK (pre-filled)
+   ============================================================ */
+const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+  `client_id=${encodeURIComponent(CLIENT_ID)}` +
+  `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+  `&response_type=code` +
+  `&scope=${encodeURIComponent(SCOPES)}` +
+  `&access_type=offline` +
+  `&prompt=consent`;
+authLink.href = authUrl;
+authLink.textContent = authUrl;
+
+/* ============================================================
+   UTIL
+   ============================================================ */
+function escapeHtml(s){
+  if (s == null) return '';
+  return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;')
+                  .replaceAll('>','&gt;').replaceAll('"','&quot;');
+}
+function makeId(){ return Date.now() + '-' + Math.random().toString(36).slice(2,9); }
+function formatTime(iso){
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('en-US',{
+      month:'short', day:'numeric', year:'numeric',
+      hour:'numeric', minute:'2-digit', hour12:true
+    });
+  } catch (e) { return iso; }
+}
+function showNotifyBanner(text){
+  notifyBanner.textContent = text;
+  notifyBanner.style.display = 'block';
+  clearTimeout(showNotifyBanner._t);
+  showNotifyBanner._t = setTimeout(() => { notifyBanner.style.display = 'none'; }, 6000);
+}
+notifyBanner.addEventListener('click', () => { notifyBanner.style.display = 'none'; });
+
+function errorToString(err){
+  if (err == null) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  if (err.message) return err.message;
+  try { return JSON.stringify(err); } catch (e) { return String(err); }
+}
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+emailInput.value = localStorage.getItem('cg_email') || '';
+spaceIdInput.value = localStorage.getItem('cg_space') || '';
+displayNameInput.value = localStorage.getItem('cg_name') || '';
+
+pinBtn.addEventListener('click', async () => {
+  const email = emailInput.value.trim().toLowerCase();
+  const space = spaceIdInput.value.trim();
+  const name = displayNameInput.value.trim() || 'You';
+
+  if (!email || !email.includes('@')) { alert('Enter your Google email'); return; }
+  if (!space || !space.startsWith('spaces/')) { alert('Enter a Space ID like spaces/AAQAYTPGL6I'); return; }
+
+  USER_EMAIL = email;
+  SPACE_ID = space;
+  DISPLAY_NAME = name;
+
+  localStorage.setItem('cg_email', USER_EMAIL);
+  localStorage.setItem('cg_space', SPACE_ID);
+  localStorage.setItem('cg_name', DISPLAY_NAME);
+
+  pinBtn.textContent = 'Connecting...';
+  pinBtn.disabled = true;
+
+  try {
+    const raw = await fetchMessages();
+    if (!Array.isArray(raw)) throw new Error('Worker did not return messages');
+  } catch (e) {
+    alert('Could not connect:\n' + errorToString(e));
+    pinBtn.textContent = 'Enter Chat';
+    pinBtn.disabled = false;
+    return;
+  }
+
+  pinOverlay.style.display = 'none';
+  chatApp.style.display = 'flex';
+
+  await loadMessages();
+  startPolling();
+
+  pinBtn.textContent = 'Enter Chat';
+  pinBtn.disabled = false;
+});
+
+/* ============================================================
+   FETCH
+   ============================================================ */
+async function fetchMessages(){
+  const url = `${WORKER_URL}/messages?space=${encodeURIComponent(SPACE_ID)}&email=${encodeURIComponent(USER_EMAIL)}&pageSize=200`;
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
+  }
+  return data.messages || [];
+}
+
+function normalizeMessage(m){
+  const senderName = (m.sender && (m.sender.displayName || m.sender.name)) || 'Unknown';
+  const senderEmail = (m.sender && m.sender.email) || '';
+  const isMine = senderEmail && senderEmail.toLowerCase() === USER_EMAIL;
+
+  let body = m.text || '';
+  if (!body && m.attachment && m.attachment.length) body = '[attachment] ' + (m.attachment[0].contentName || 'file');
+  else if (!body && m.attachedGifs && m.attachedGifs.length) body = '[GIF]';
+
+  return {
+    id: m.name || makeId(),
+    username: senderName,
+    email: senderEmail,
+    message: body,
+    timestamp: formatTime(m.createTime),
+    isMine: !!isMine
+  };
+}
+
+/* ============================================================
+   LOAD — always scroll to bottom (latest)
+   ============================================================ */
+async function loadMessages(){
+  try {
+    const raw = await fetchMessages();          // newest first from Worker
+    const list = raw.slice().reverse().map(normalizeMessage);  // oldest→newest for display
+    messages = list;
+    renderAll(false);
+    requestAnimationFrame(() => { chatDiv.scrollTop = chatDiv.scrollHeight; });
+  } catch (e) {
+    showNotifyBanner('Load failed: ' + errorToString(e));
+  }
+}
+
+function renderAll(scrollBottom){
+  chatDiv.innerHTML = '';
+  displayed.clear();
+  messages.forEach(m => renderOneMessage(m, false));
+  if (scrollBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
+}
+
+function renderOneMessage(msg, live){
+  if (displayed.has(msg.id)) return;
+  displayed.add(msg.id);
+
+  const el = document.createElement('div');
+  el.className = 'message ' + (msg.isMine ? 'myMessage' : 'otherMessage');
+  el.dataset.id = msg.id;
+
+  const content = msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)
+    ? `<img src="${escapeHtml(msg.message)}" style="max-width:260px;border-radius:8px" />`
+    : (msg.message && msg.message.match(/^https?:\/\//i)
+        ? `<a href="${escapeHtml(msg.message)}" target="_blank">${escapeHtml(msg.message)}</a>`
+        : escapeHtml(msg.message || ''));
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-start;gap:10px;width:100%;">
+      <div style="width:30px;height:30px;border-radius:50%;background:var(--button-background);color:var(--button-text);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;">
+        ${escapeHtml((msg.username || '?').charAt(0).toUpperCase())}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:4px;flex-wrap:wrap;">
+          <strong style="flex-shrink:0;">${escapeHtml(msg.username)}</strong>
+          <div style="min-width:0;">${content}</div>
+        </div>
+        <div class="timestamp">${escapeHtml(msg.timestamp || '')}</div>
+      </div>
+    </div>`;
+
+  chatDiv.appendChild(el);
+
+  if (live) {
+    const nearBottom = chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < 200;
+    if (nearBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
+  }
+}
+
+/* ============================================================
+   SEND
+   ============================================================ */
+sendBtn.addEventListener('click', sendMessage);
+messageInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+async function sendMessage(){
+  const text = (messageInput.value || '').trim();
+  if (!text) return;
+  messageInput.value = '';
+  await sendToWorker(text);
+}
+
+async function sendToWorker(text){
+  const tempId = 'temp-' + makeId();
+  const optimistic = { id: tempId, username: DISPLAY_NAME, message: text, timestamp: formatTime(new Date().toISOString()), isMine: true };
+  messages.push(optimistic);
+  renderOneMessage(optimistic, true);
+  chatDiv.scrollTop = chatDiv.scrollHeight;
+
+  try {
+    const res = await fetch(`${WORKER_URL}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ space: SPACE_ID, text: text, email: USER_EMAIL })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
+
+    messages = messages.filter(m => m.id !== tempId);
+    displayed.delete(tempId);
+    const el = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
+    if (el) el.remove();
+
+    await loadMessages();
+  } catch (e) {
+    showNotifyBanner('Send failed: ' + errorToString(e));
+    messages = messages.filter(m => m.id !== tempId);
+    displayed.delete(tempId);
+    const el = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
+    if (el) el.remove();
+  }
+}
+
+/* ============================================================
+   POLLING
+   ============================================================ */
+function startPolling(){
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    if (isPolling) return;
+    isPolling = true;
+    try {
+      const raw = await fetchMessages();
+      const list = raw.slice().reverse().map(normalizeMessage);
+      const oldIds = messages.map(m => m.id).join('|');
+      const newIds = list.map(m => m.id).join('|');
+      if (oldIds !== newIds) {
+        const atBottom = chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < 150;
+        messages = list;
+        renderAll(atBottom);
+        if (document.hidden && list.length) {
+          const last = list[list.length - 1];
+          if (last && !last.isMine) {
+            showNotifyBanner(`💬 ${last.username}: ${(last.message || '').substring(0, 80)}`);
+          }
+        }
+      }
+    } catch (e) { /* silent */ }
+    finally { isPolling = false; }
+  }, 8000);
+}
+function stopPolling(){ if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+refreshBtn.addEventListener('click', () => loadMessages());
+signoutBtn.addEventListener('click', () => {
+  stopPolling();
+  chatApp.style.display = 'none';
+  pinOverlay.style.display = 'flex';
+  messages = []; displayed.clear(); chatDiv.innerHTML = '';
+});
+spaceInfoBtn.addEventListener('click', () => {
+  spaceInfoText.textContent = `Email: ${USER_EMAIL}\nSpace: ${SPACE_ID}\nDisplay name: ${DISPLAY_NAME}`;
+  spaceInfoText.style.whiteSpace = 'pre-wrap';
+  spaceModal.style.display = 'flex';
+});
+closeSpaceBtn.addEventListener('click', () => { spaceModal.style.display = 'none'; });
+spaceModal.addEventListener('click', (e) => { if (e.target === spaceModal) spaceModal.style.display = 'none'; });
+
+/* ============================================================
+   GIF KEYBOARD
+   ============================================================ */
+const GIPHY_API_KEY = 'zp13FWKyoD50OMLmwd3mjKcdrQrhWFms';
+const gifBtn      = document.getElementById('gifBtn');
+const gifKeyboard = document.getElementById('gifKeyboard');
+const closeGifBtn = document.getElementById('closeGifBtn');
+const gifSearchInput = document.getElementById('gifSearchInput');
+const gifResults  = document.getElementById('gifResults');
+let gifTimeout = null;
+
+gifBtn.addEventListener('click', () => {
+  gifKeyboard.style.display = gifKeyboard.style.display === 'flex' ? 'none' : 'flex';
+  if (gifKeyboard.style.display === 'flex') searchGifs('trending');
+});
+closeGifBtn.addEventListener('click', () => { gifKeyboard.style.display = 'none'; });
+gifSearchInput.addEventListener('input', (e) => {
+  clearTimeout(gifTimeout);
+  const t = e.target.value.trim();
+  gifTimeout = setTimeout(() => searchGifs(t || 'trending'), 400);
+});
+
+async function searchGifs(q){
+  gifResults.innerHTML = '<div class="loading-gifs">🎬 Loading...</div>';
+  try {
+    const url = q === 'trending'
+      ? `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=24&rating=pg-13`
+      : `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(q)}&limit=24&rating=pg-13`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if (!d.data || !d.data.length) { gifResults.innerHTML = '<div class="loading-gifs">😢 No GIFs found</div>'; return; }
+    gifResults.innerHTML = '';
+    d.data.forEach(g => {
+      const u = g.images.fixed_height.url || g.images.original.url;
+      const item = document.createElement('div');
+      item.className = 'gif-result-item';
+      item.innerHTML = `<img src="${u}" loading="lazy" alt="gif"/>`;
+      item.addEventListener('click', () => {
+        messageInput.value = u;
+        sendMessage();
+        gifKeyboard.style.display = 'none';
+        gifSearchInput.value = '';
+      });
+      gifResults.appendChild(item);
+    });
+  } catch (e) { gifResults.innerHTML = '<div class="loading-gifs">❌ Failed to load</div>'; }
+}
+
+/* ============================================================
+   IMAGE UPLOAD (ImgBB)
+   ============================================================ */
+const IMGBB_API_KEY = '588cf67669e7952039431719ce76ff7d';
+const imageBtn = document.getElementById('imageBtn');
+const imageInput = document.createElement('input');
+imageInput.type = 'file';
+imageInput.accept = 'image/*';
+imageInput.style.display = 'none';
+document.body.appendChild(imageInput);
+
+imageBtn.addEventListener('click', () => imageInput.click());
+imageInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { showNotifyBanner('Image too large (max 10MB)'); imageInput.value = ''; return; }
+  const orig = imageBtn.textContent;
+  imageBtn.textContent = '⏳'; imageBtn.disabled = true;
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+    const fd = new FormData();
+    fd.append('key', IMGBB_API_KEY);
+    fd.append('image', base64);
+    const resp = await fetch('https://api.imgbb.com/1/upload', { method: 'POST', body: fd });
+    const j = await resp.json();
+    if (j.success) await sendToWorker(j.data.url);
+    else showNotifyBanner('Upload failed');
+  } catch (err) { showNotifyBanner('Upload failed: ' + errorToString(err)); }
+  finally { imageBtn.textContent = orig; imageBtn.disabled = false; imageInput.value = ''; }
+});
+
+/* ============================================================
+   HEADER SCROLL
+   ============================================================ */
+const header = document.querySelector('header');
+let lastScrollTop = 0;
+chatDiv.addEventListener('scroll', () => {
+  const st = chatDiv.scrollTop;
+  const sh = chatDiv.scrollHeight;
+  const ch = chatDiv.clientHeight;
+  const dist = sh - st - ch;
+  const dir = st > lastScrollTop ? 'down' : 'up';
+  if (dist <= 50) header.classList.remove('scrolled');
+  else if (dir === 'down' || dir === 'up') header.classList.add('scrolled');
+  lastScrollTop = st;
+});
+
+/* ============================================================
+   AUTO-RESUME
+   ============================================================ */
+(async function autoResume(){
+  const email = localStorage.getItem('cg_email');
+  const space = localStorage.getItem('cg_space');
+  const name = localStorage.getItem('cg_name');
+  if (!email || !space) return;
+
+  USER_EMAIL = email;
+  SPACE_ID = space;
+  DISPLAY_NAME = name || 'You';
+
+  try {
+    const raw = await fetchMessages();
+    if (!Array.isArray(raw)) return;
+    pinOverlay.style.display = 'none';
+    chatApp.style.display = 'flex';
+    await loadMessages();
+    startPolling();
+  } catch (e) { /* stay on login */ }
+})();
+
+console.log('✅ Chatify-Google loaded');
+</script>
+
+</body>
+</html>
