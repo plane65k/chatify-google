@@ -658,8 +658,8 @@ document.addEventListener('visibilitychange', () => {
     /* ============================================================
        Fetch
        ============================================================ */
-    async function fetchMessages() {
-    const url = `WORKERURL/messages?space={encodeURIComponent(SPACE_ID)}&pageSize=200`;
+        async function fetchMessages() {
+    const url = WORKER_URL + '/messages?space=' + encodeURIComponent(SPACE_ID) + '&pageSize=200';
     const res = await fetch(url, {
         headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
     });
@@ -761,7 +761,7 @@ async function fetchReactionsForMessages() {
   const recent = messages.slice(-20); // last 20 only
   for (const msg of recent) {
     try {
-      const res = await fetch(`WORKERURL/reactions?message={encodeURIComponent(msg.id)}`, {
+            const res = await fetch(WORKER_URL + '/reactions?message=' + encodeURIComponent(msg.id), {
         headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
       });
       const data = await res.json();
@@ -792,7 +792,7 @@ async function fetchReactionsForMessages() {
         contentHtml = `<img id="${cid}" class="message-image" alt="attachment" loading="lazy" />`;
         setTimeout(async () => {
             try {
-                const r = await fetch(`WORKERURL/attachment?space={encodeURIComponent(SPACE_ID)}&resource=encodeURIComponent(attName)&email={encodeURIComponent(USER_EMAIL)}`, {
+                                const r = await fetch(WORKER_URL + '/attachment?space=' + encodeURIComponent(SPACE_ID) + '&resource=' + encodeURIComponent(attName) + '&email=' + encodeURIComponent(USER_EMAIL), {
                     headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
                 });
                 if (!r.ok) return;
@@ -807,7 +807,7 @@ async function fetchReactionsForMessages() {
     } else if (msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
         contentHtml = `<img src="${escapeHtml(msg.message)}" class="message-image" />`;
     } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
-        contentHtml = `<a href="escapeHtml(msg.message)"target="blank">{escapeHtml(msg.message)}</a>`;
+        contentHtml = '<a href="' + escapeHtml(msg.message) + '" target="_blank">' + escapeHtml(msg.message) + '</a>';
     } else {
         contentHtml = escapeHtml(msg.message || '');
     }
@@ -827,8 +827,8 @@ async function fetchReactionsForMessages() {
             grouped[emoji].push((r.user && r.user.displayName) || 'Someone');
         });
         const parts = [];
-        for (const emoji in grouped) {
-            parts.push(`<span class="reaction" data-emoji="escapeHtml(emoji)"data-msgid="{msg.id}" title="escapeHtml(grouped[emoji].join(','))">{escapeHtml(emoji)} ${grouped[emoji].length}</span>`);
+                for (const emoji in grouped) {
+            parts.push('<span class="reaction" data-emoji="' + escapeHtml(emoji) + '" data-msgid="' + msg.id + '" title="' + escapeHtml(grouped[emoji].join(', ')) + '">' + escapeHtml(emoji) + ' ' + grouped[emoji].length + '</span>');
         }
         reactionsHtml = `<div class="reactions">${parts.join('')}</div>`;
     }
@@ -1267,9 +1267,9 @@ async function sendGif(gifUrl, caption = '') {
                 if (!grouped[em]) grouped[em] = [];
                 grouped[em].push((r.user && r.user.displayName) || 'Someone');
             });
-            let parts = [];
+                        let parts = [];
             for (const em in grouped) {
-                parts.push(`<span class="reaction" data-emoji="escapeHtml(em)"data-msgid="{msg.id}" title="escapeHtml(grouped[em].join(','))">{escapeHtml(em)} ${grouped[em].length}</span>`);
+                parts.push('<span class="reaction" data-emoji="' + escapeHtml(em) + '" data-msgid="' + msg.id + '" title="' + escapeHtml(grouped[em].join(', ')) + '">' + escapeHtml(em) + ' ' + grouped[em].length + '</span>');
             }
             reactionsContainer.innerHTML = parts.join('');
             
@@ -1284,7 +1284,7 @@ async function sendGif(gifUrl, caption = '') {
             let fullMessageName = messageId;
             if (!messageId.startsWith('spaces/')) {
                 const spacePart = SPACE_ID.startsWith('spaces/') ? SPACE_ID : `spaces/${SPACE_ID}`;
-                fullMessageName = `spacePart/messages/{messageId}`;
+                fullMessageName = spacePart + '/messages/' + messageId;
             }
 
             const res = await fetch(`${WORKER_URL}/react`, {
@@ -1325,8 +1325,8 @@ async function sendGif(gifUrl, caption = '') {
                         grouped[em].push((r.user && r.user.displayName) || 'Someone');
                     });
                     let parts = [];
-                    for (const em in grouped) {
-                        parts.push(`<span class="reaction" data-emoji="escapeHtml(em)"data-msgid="{freshMsg.id}" title="escapeHtml(grouped[em].join(','))">{escapeHtml(em)} ${grouped[em].length}</span>`);
+                                        for (const em in grouped) {
+                        parts.push('<span class="reaction" data-emoji="' + escapeHtml(em) + '" data-msgid="' + freshMsg.id + '" title="' + escapeHtml(grouped[em].join(', ')) + '">' + escapeHtml(em) + ' ' + grouped[em].length + '</span>');
                     }
                     newReactionsContainer.innerHTML = parts.join('');
                     const timestamp = currentEl.querySelector('.timestamp');
@@ -1550,7 +1550,7 @@ async function sendGif(gifUrl, caption = '') {
         try {
             const url = q === 'trending'
                 ? `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=24&rating=pg-13`
-                : `https://api.giphy.com/v1/gifs/search?api_key=GIPHYAPIKEY&q={encodeURIComponent(q)}&limit=24&rating=pg-13`;
+                                : 'https://api.giphy.com/v1/gifs/search?api_key=' + GIPHY_API_KEY + '&q=' + encodeURIComponent(q) + '&limit=24&rating=pg-13';
             const r = await fetch(url);
             const d = await r.json();
             if (!d.data || !d.data.length) { gifResults.innerHTML = '<div class="loading-gifs">No GIFs found</div>'; return; }
@@ -1980,4 +1980,3 @@ function isNearBottom(threshold = 150) {
 
 </body>
 </html>
-
