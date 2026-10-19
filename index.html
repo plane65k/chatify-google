@@ -763,10 +763,24 @@ async function fetchReactionsForMessages() {
 
         const avatarUrl = msg.avatarUrl || MY_AVATAR;
 
-        let contentHtml = '';
+                let contentHtml = '';
         if (msg.attachment) {
             const attName = (msg.attachment.attachmentDataRef && msg.attachment.attachmentDataRef.resourceName) || msg.attachment.name;
-            contentHtml = `<img src="${WORKER_URL}/attachment?space=${encodeURIComponent(SPACE_ID)}&resource=${encodeURIComponent(attName)}&email=${encodeURIComponent(USER_EMAIL)}" class="message-image" loading="lazy" />`;
+            const cid = 'att-' + msg.id.replace(/[^a-z0-9]/gi, '');
+            // Render a placeholder, then load the real image with fetch + Blob URL
+            contentHtml = `<img id="${cid}" class="message-image" alt="attachment" loading="lazy" />`;
+            setTimeout(async () => {
+                try {
+                    const r = await fetch(`${WORKER_URL}/attachment?space=${encodeURIComponent(SPACE_ID)}&resource=${encodeURIComponent(attName)}&email=${encodeURIComponent(USER_EMAIL)}`, {
+                        headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
+                    });
+                    if (!r.ok) return;
+                    const blob = await r.blob();
+                    const url = URL.createObjectURL(blob);
+                    const img = document.getElementById(cid);
+                    if (img) img.src = url;
+                } catch (e) { /* silent */ }
+            }, 0);
         } else if (msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
             contentHtml = `<img src="${escapeHtml(msg.message)}" class="message-image" />`;
         } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
@@ -980,8 +994,8 @@ async function fetchReactionsForMessages() {
     imageInput.accept = 'image/*';
     imageInput.style.display = 'none';
     document.body.appendChild(imageInput);
-
-        imageInput.addEventListener('change', async (e) => {
+imageBtn.addEventListener('click', () => imageInput.click());
+    imageInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         if (file.size > 200 * 1024 * 1024) { showNotifyBanner('Image too large (max 200MB)'); imageInput.value = ''; return; }
@@ -998,9 +1012,10 @@ async function fetchReactionsForMessages() {
                 r.readAsDataURL(file);
             });
 
+            // 1. Upload to Google Chat (real attachment, not ImgBB)
             const uploadRes = await fetch(`${WORKER_URL}/upload`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + SESSION_TOKEN
                 },
@@ -1013,10 +1028,12 @@ async function fetchReactionsForMessages() {
             });
             const uploadData = await uploadRes.json();
             if (!uploadRes.ok || uploadData.error) throw new Error(errorToString(uploadData.error));
+            if (!uploadData.attachment) throw new Error('Worker did not return attachment');
 
+            // 2. Send the message with the attachment
             const sendRes = await fetch(`${WORKER_URL}/send`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + SESSION_TOKEN
                 },
