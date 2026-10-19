@@ -563,7 +563,18 @@ let MY_AVATAR = ''; // <--- ADD THIS
         if (err.message) return err.message;
         try { return JSON.stringify(err); } catch (e) { return String(err); }
     }
+document.addEventListener('click', function onceAsk() {
+    requestNotifyPermission();
+    document.removeEventListener('click', onceAsk);
+}, { once: true });
 
+// When user returns to the tab, clear the unread dot and any pending pill
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        updateTitleUnread(false);
+        if (isNearBottom()) hideNewMessageBelowPill();
+    }
+});
     /* ============================================================
        Login
        ============================================================ */
@@ -672,7 +683,11 @@ let MY_AVATAR = ''; // <--- ADD THIS
                 body = body || '[attachment] ' + (att.contentName || 'file');
             }
         }
-        if (!body && m.attachedGifs && m.attachedGifs.length) body = '[GIF]';
+                let gifUrl = null;
+        if (m.attachedGifs && m.attachedGifs.length) {
+            gifUrl = m.attachedGifs[0].uri || null;
+            if (!body) body = gifUrl || '[GIF]';
+        }
 
         let quoted = null;
     if (m.quotedMessageMetadata) {
@@ -692,6 +707,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
             avatarUrl: senderAvatar,
             message: body,
             attachment: attachment,
+            gifUrl: gifUrl,
             timestamp: formatTime(m.createTime),
             isMine: !!isMine,
             reactions: m.emojiReactionSummaries || [],
@@ -704,28 +720,25 @@ let MY_AVATAR = ''; // <--- ADD THIS
        Load / render
        ============================================================ */
         async function loadMessages() {
-        loadingDiv.style.display = 'flex';
-        try {
-            const raw = await fetchMessages();
-            const list = raw.slice().reverse().map(normalizeMessage);
-            
-            // --- ADD THIS 3 LINES ---
-            if (!MY_AVATAR) {
-                const myMsg = list.find(m => m.isMine && m.avatarUrl);
-                if (myMsg) MY_AVATAR = myMsg.avatarUrl;
-            }
-            // ------------------------
+    loadingDiv.style.display = 'flex';
+    try {
+        const raw = await fetchMessages();
+        const list = raw.slice().reverse().map(normalizeMessage);
 
-            messages = list;
-            renderAll(false);
-            requestAnimationFrame(() => { chatDiv.scrollTop = chatDiv.scrollHeight; });
-        } catch (e) {
-            showNotifyBanner('Load failed: ' + errorToString(e));
-        } finally {
-            loadingDiv.style.display = 'none';
+        if (!MY_AVATAR) {
+            const myMsg = list.find(m => m.isMine && m.avatarUrl);
+            if (myMsg) MY_AVATAR = myMsg.avatarUrl;
         }
-    }
 
+        messages = list;
+        renderAll(false);
+        scrollToBottom();   // was: requestAnimationFrame(() => chatDiv.scrollTop = ...)
+    } catch (e) {
+        showNotifyBanner('Load failed: ' + errorToString(e));
+    } finally {
+        loadingDiv.style.display = 'none';
+    }
+}
     function renderAll(scrollBottom) {
         chatDiv.innerHTML = '';
         displayed.clear();
@@ -783,6 +796,8 @@ async function fetchReactionsForMessages() {
                     if (img) img.src = url;
                 } catch (e) { /* silent */ }
             }, 0);
+         } else if (msg.gifUrl) {
+            contentHtml = `<img src="${escapeHtml(msg.gifUrl)}" class="message-image" loading="lazy" alt="gif" />`;
         } else if (msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
             contentHtml = `<img src="${escapeHtml(msg.message)}" class="message-image" />`;
         } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
@@ -857,9 +872,19 @@ async function fetchReactionsForMessages() {
         }
 
         if (live) {
-            const nearBottom = chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < 200;
-            if (nearBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
+    if (msg.isMine) {
+        scrollToBottom();
+        hideNewMessageBelowPill();
+    } else {
+        if (isNearBottom(200)) {
+            scrollToBottom();
+            hideNewMessageBelowPill();
+        } else {
+            // User is scrolled up — don't yank them. Show a pill instead.
+            showNewMessageBelowPill(msg.username, msg.message || '[media]');
         }
+    }
+}
     }
     /* ============================================================
        Send
@@ -1084,6 +1109,127 @@ imageBtn.addEventListener('click', () => imageInput.click());
         }
     });
 
+
+
+
+
+
+
+
+    /* ============================================================
+   Send GIF (with ghost + triple confirmation)
+   ============================================================ */
+async function sendGif(gifUrl, caption = '') {
+    if (isSendingMessage) {
+        showNotifyBanner('Please wait for the previous message to send.');
+        return;
+    }
+    isSendingMessage = true;
+
+    const tempId = 'temp-' + makeId();
+
+    const optimistic = {
+        id: tempId,
+        username: DISPLAY_NAME,
+        avatarUrl: MY_AVATAR,
+        message: caption || '',
+        gifUrl: gifUrl,
+        timestamp: formatTime(new Date().toISOString()),
+        isMine: true,
+        reactions: [],
+        quoted: null
+    };
+
+    messages.push(optimistic);
+    renderOneMessage(optimistic, true);
+
+    let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
+    if (tempEl) {
+        tempEl.style.opacity = '0.55';
+        tempEl.style.animation = 'ghostPulse 1.4s ease-in-out infinite';
+    }
+
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+
+    let realMsg = null;
+
+    try {
+        const payload = {
+            space: SPACE_ID,
+            text: caption || ' ',
+            attachedGifs: [{ uri: gifUrl }]
+        };
+
+        // ─── CONFIRMATION #1: Server accepted the GIF message ───
+        const res = await fetch(`${WORKER_URL}/send`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + SESSION_TOKEN
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
+        if (!data.message || !data.message.name) throw new Error('Server did not return message ID');
+
+        realMsg = normalizeMessage(data.message);
+
+        // Solidify the ghost in place — no re-render, no flicker
+        if (tempEl) {
+            tempEl.style.opacity = '1';
+            tempEl.style.animation = 'none';
+            tempEl.dataset.id = realMsg.id;
+            if (realMsg.username) {
+                const nameEl = tempEl.querySelector('strong');
+                if (nameEl) nameEl.textContent = realMsg.username;
+            }
+        }
+
+        messages = messages.filter(m => m.id !== tempId);
+        displayed.delete(tempId);
+        messages.push(realMsg);
+        displayed.add(realMsg.id);
+
+    } catch (e) {
+        // Confirmation #1 failed → fail loudly
+        showNotifyBanner('GIF send failed: ' + errorToString(e));
+        if (tempEl) {
+            tempEl.style.animation = 'none';
+            tempEl.style.background = '#d32f2f';
+            tempEl.style.opacity = '1';
+            setTimeout(() => tempEl.remove(), 2000);
+        }
+        messages = messages.filter(m => m.id !== tempId);
+        displayed.delete(tempId);
+        isSendingMessage = false;
+        return;
+    }
+
+    // ─── CONFIRMATION #2: Immediate GET verification (1s later) ───
+    setTimeout(async () => {
+        try {
+            const raw = await fetchMessages();
+            const found = raw.some(m => m.name === realMsg.id);
+            if (!found) {
+                failMessage(realMsg.id, 'GIF not found in Google Chat (check 2)');
+            }
+        } catch (e) { /* transient network — don't fail on network error */ }
+    }, 1000);
+
+    // ─── CONFIRMATION #3: Delayed stability check (4s later) ───
+    setTimeout(async () => {
+        try {
+            const raw = await fetchMessages();
+            const found = raw.find(m => m.name === realMsg.id);
+            if (!found) {
+                failMessage(realMsg.id, 'GIF disappeared from Google Chat (check 3)');
+            }
+        } catch (e) { /* transient network — don't fail on network error */ }
+    }, 4000);
+
+    isSendingMessage = false;
+}
     /* ============================================================
        Reactions
        ============================================================ */
@@ -1264,30 +1410,62 @@ imageBtn.addEventListener('click', () => imageInput.click());
                 const oldIds = messages.map(m => m.id).join('|');
                 const newIds = list.map(m => m.id).join('|');
                 
-                if (oldIds !== newIds) {
-                    // Detect new messages for notifications BEFORE rendering
-                    if (list.length > messages.length && document.hidden) {
-                        const last = list[list.length - 1];
-                        if (last && !last.isMine) {
-                            showNotifyBanner(`${last.username}: ${(last.message || '').substring(0, 80)}`);
-                        }
-                    }
+               if (oldIds !== newIds) {
+    const wasNearBottom = isNearBottom();
+    const oldIdSet = new Set(messages.map(m => m.id));
 
-                    // Structure changed, do a full refresh with scroll preservation
-                    const isAtBottom = chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < 150;
-                    const oldScrollTop = chatDiv.scrollTop;
-                    const oldScrollHeight = chatDiv.scrollHeight;
+    // New messages present in `list` but not in current `messages`
+    const brandNew = list.filter(m => !oldIdSet.has(m.id));
 
-                    messages = list;
-                    renderAll(false);
+    // Did any existing message get REMOVED or was the ORDER changed?
+    // If so, we can't safely diff — fall back to full re-render.
+    const listIdSet = new Set(list.map(m => m.id));
+    const somethingRemoved = messages.some(m => !listIdSet.has(m.id));
+    const orderChanged = (() => {
+        const kept = list.map(m => m.id).filter(id => oldIdSet.has(id));
+        const prev = messages.map(m => m.id).filter(id => listIdSet.has(id));
+        return kept.join('|') !== prev.join('|');
+    })();
 
-                    if (isAtBottom) {
-                        chatDiv.scrollTop = chatDiv.scrollHeight;
-                    } else {
-                        const newScrollHeight = chatDiv.scrollHeight;
-                        chatDiv.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
-                    }
-                } else {
+    // Notifications for genuinely new incoming messages
+    const brandNewIncoming = brandNew.filter(m => !m.isMine);
+    for (const m of brandNewIncoming) {
+        showDesktopNotification(m.username, m.message || '[media]', m.id);
+    }
+    if (brandNewIncoming.length > 0 && document.visibilityState !== 'visible') {
+        updateTitleUnread(true);
+    } else if (brandNewIncoming.length > 0 && !wasNearBottom) {
+        const last = brandNewIncoming[brandNewIncoming.length - 1];
+        showNewMessageBelowPill(last.username, last.message || '[media]');
+    }
+
+    const shouldFollow = wasNearBottom || brandNew.some(m => m.isMine);
+
+    if (!somethingRemoved && !orderChanged && brandNew.length > 0) {
+        // ─── Incremental path: append only new messages ───
+        // Existing DOM nodes stay put, so no layout thrash, no bounce.
+        messages = list;
+        for (const m of brandNew) {
+            renderOneMessage(m, false); // `false` = don't auto-scroll inside render
+        }
+        if (shouldFollow) {
+            scrollToBottom();
+            hideNewMessageBelowPill();
+            if (document.visibilityState === 'visible') updateTitleUnread(false);
+        }
+    } else {
+        // ─── Fallback: structural change (deletion / reorder) ───
+        messages = list;
+        renderAll(false);
+        void chatDiv.scrollHeight;
+        if (shouldFollow) {
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+            scrollToBottom();
+            hideNewMessageBelowPill();
+            if (document.visibilityState === 'visible') updateTitleUnread(false);
+        }
+    }
+} else {
                     // Same messages, but reactions might have changed.
                     let needsReRender = false;
                     list.forEach(freshMsg => {
@@ -1298,16 +1476,27 @@ imageBtn.addEventListener('click', () => imageInput.click());
                         }
                     });
                     if (needsReRender) {
-                        const oldScrollTop = chatDiv.scrollTop;
-                        const oldScrollHeight = chatDiv.scrollHeight;
-                        renderAll(false);
-                        // Restore scroll
-                        chatDiv.scrollTop = oldScrollTop + (chatDiv.scrollHeight - oldScrollHeight);
-                    }
+    const wasNearBottom = isNearBottom();
+    const oldScrollTop = chatDiv.scrollTop;
+    const oldScrollHeight = chatDiv.scrollHeight;
+
+    renderAll(false);
+    void chatDiv.scrollHeight; // flush layout
+
+    if (wasNearBottom) {
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+        scrollToBottom();
+    } else {
+        const distanceFromBottom = oldScrollHeight - oldScrollTop;
+        chatDiv.scrollTop = Math.max(0, chatDiv.scrollHeight - distanceFromBottom);
+    }
+}
                 }
             } catch (e) { /* silent */ }
             finally { isPolling = false; }
         }, 4000);
+
+        
     }
     function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
@@ -1356,12 +1545,13 @@ imageBtn.addEventListener('click', () => imageInput.click());
                 const item = document.createElement('div');
                 item.className = 'gif-result-item';
                 item.innerHTML = `<img src="${u}" loading="lazy" alt="gif"/>`;
-                item.addEventListener('click', () => {
-                    messageInput.value = u;
-                    sendMessage();
-                    gifKeyboard.style.display = 'none';
-                    gifSearchInput.value = '';
-                });
+                                item.addEventListener('click', () => {
+    const caption = (messageInput.value || '').trim();
+    messageInput.value = '';
+    sendGif(u, caption);
+    gifKeyboard.style.display = 'none';
+    gifSearchInput.value = '';
+});
                 gifResults.appendChild(item);
             });
         } catch (e) { gifResults.innerHTML = '<div class="loading-gifs">Failed to load</div>'; }
@@ -1643,6 +1833,134 @@ imageBtn.addEventListener('click', () => imageInput.click());
     }
 })();
     console.log('Chatify-Google loaded');
+
+
+
+
+
+let _pinBottomActive = false;
+let _pinBottomObserver = null;
+
+function scrollToBottom(smooth = false) {
+    if (smooth) {
+        chatDiv.scrollTo({ top: chatDiv.scrollHeight, behavior: 'smooth' });
+    } else {
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    // Re-pin as new content (images, GIFs, attachments) grows the container.
+    // We stop re-pinning as soon as the user scrolls up manually.
+    if (!_pinBottomActive) {
+        _pinBottomActive = true;
+        const unpin = () => { _pinBottomActive = false; };
+        chatDiv.addEventListener('wheel', unpin, { once: true, passive: true });
+        chatDiv.addEventListener('touchstart', unpin, { once: true, passive: true });
+    }
+}
+
+// Fire on any layout growth of chatDiv — pins to bottom only if we're
+// still in "follow" mode from the last scrollToBottom().
+const _sizeObs = new ResizeObserver(() => {
+    if (_pinBottomActive) {
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+});
+_sizeObs.observe(chatDiv);
+
+// Also pin when images inside the chat finish loading.
+chatDiv.addEventListener('load', (e) => {
+    if (e.target && e.target.tagName === 'IMG' && _pinBottomActive) {
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+}, true); // capture phase so we catch it even though `load` doesn't bubble
+
+
+
+/* ---------- Notification helpers ---------- */
+let NOTIFY_PERMISSION = (typeof Notification !== 'undefined') ? Notification.permission : 'denied';
+const UNREAD_TITLE = '🔵 Chatify-Google';
+const BASE_TITLE = 'Chatify-Google';
+let hasUnread = false;
+
+function updateTitleUnread(unread) {
+    hasUnread = unread;
+    document.title = unread ? UNREAD_TITLE : BASE_TITLE;
+}
+
+function requestNotifyPermission() {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'granted') {
+        NOTIFY_PERMISSION = 'granted';
+        return;
+    }
+    if (Notification.permission === 'denied') {
+        NOTIFY_PERMISSION = 'denied';
+        return;
+    }
+    Notification.requestPermission().then(p => {
+        NOTIFY_PERMISSION = p;
+        if (p === 'granted') {
+            showNotifyBanner('Notifications enabled');
+        }
+    });
+}
+
+function showDesktopNotification(sender, body, tag) {
+    // Only fire a real OS notification when the tab is hidden.
+    if (document.visibilityState === 'visible') return;
+    if (typeof Notification === 'undefined') return;
+    if (NOTIFY_PERMISSION !== 'granted') return;
+    try {
+        const n = new Notification(`${sender}`, {
+            body: body || 'New message',
+            tag: tag || 'chatify-msg',      // collapses rapid-fire notifications
+            icon: 'https://res.cloudinary.com/dceqg5cky/image/upload/SDG_log-removebg-preview_bslq5d.png',
+            silent: false,
+            renotify: true,
+        });
+        n.onclick = () => {
+            window.focus();
+            n.close();
+            scrollToBottom();
+            updateTitleUnread(false);
+        };
+    } catch (e) { /* some browsers throw if not triggered from user gesture */ }
+}
+
+/* ---------- "New message below" pill ---------- */
+function showNewMessageBelowPill(sender, preview, onClick) {
+    let pill = document.getElementById('newMsgPill');
+    if (!pill) {
+        pill = document.createElement('button');
+        pill.id = 'newMsgPill';
+        pill.style.cssText = `
+            position:fixed;left:50%;transform:translateX(-50%);bottom:90px;
+            background:var(--button-background);color:var(--button-text);
+            border:none;padding:10px 16px;border-radius:999px;font-weight:600;
+            font-size:13px;cursor:pointer;z-index:250;
+            box-shadow:0 8px 24px rgba(0,0,0,0.25);
+            display:none;max-width:90vw;white-space:nowrap;
+            overflow:hidden;text-overflow:ellipsis;
+        `;
+        document.body.appendChild(pill);
+    }
+    pill.textContent = `↓ New message from ${sender}: ${(preview || '').slice(0, 40)}`;
+    pill.onclick = () => {
+        pill.style.display = 'none';
+        scrollToBottom();
+        if (typeof onClick === 'function') onClick();
+    };
+    pill.style.display = 'block';
+}
+
+function hideNewMessageBelowPill() {
+    const pill = document.getElementById('newMsgPill');
+    if (pill) pill.style.display = 'none';
+}
+
+function isNearBottom(threshold = 150) {
+    return chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < threshold;
+}
 </script>
 
 </body>
