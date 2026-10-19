@@ -692,7 +692,7 @@ let MY_AVATAR = ''; // <--- ADD THIS
             attachment: attachment,
             timestamp: formatTime(m.createTime),
             isMine: !!isMine,
-            reactions: m.reactions || [],
+            reactions: m.emojiReactionSummaries || [],
             quoted: quoted,
             rawUpdateTime: m.lastUpdateTime || m.createTime 
         };
@@ -730,6 +730,28 @@ let MY_AVATAR = ''; // <--- ADD THIS
         messages.forEach(m => renderOneMessage(m, false));
         if (scrollBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
     }
+
+
+
+
+// After renderAll, asynchronously fetch reactions for visible messages
+async function fetchReactionsForMessages() {
+  const recent = messages.slice(-20); // last 20 only
+  for (const msg of recent) {
+    try {
+      const res = await fetch(`${WORKER_URL}/reactions?message=${encodeURIComponent(msg.id)}`, {
+        headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
+      });
+      const data = await res.json();
+      if (data.reactions && data.reactions.length) {
+        msg.reactions = data.reactions;
+        // Update just this message's reaction block in the DOM
+        // (reuse the update code from your addReaction success handler)
+      }
+    } catch (e) { /* silent */ }
+  }
+}
+
 
         function renderOneMessage(msg, live) {
         if (displayed.has(msg.id)) return;
