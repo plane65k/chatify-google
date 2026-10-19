@@ -954,7 +954,7 @@ async function fetchReactionsForMessages() {
                 payload.quotedLastUpdateTime = quoted.lastUpdateTime;
             }
 
-            // ─── CONFIRMATION #1: Server accepted the message ───
+            // ─── CONFIRMATION #1: Server accepted the POST ───
             const res = await fetch(`${WORKER_URL}/send`, {
                 method: 'POST',
                 headers: {
@@ -965,17 +965,11 @@ async function fetchReactionsForMessages() {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
-
-            if (!data.message || !data.message.name) {
-                throw new Error('Server did not return message ID');
-            }
+            if (!data.message || !data.message.name) throw new Error('Server did not return message ID');
 
             realMsg = normalizeMessage(data.message);
 
-            // Solidify the ghost in place — no re-render, no flicker
             if (tempEl) {
-                tempEl.style.opacity = '1';
-                tempEl.style.animation = 'none';
                 tempEl.dataset.id = realMsg.id;
                 if (realMsg.username) {
                     const nameEl = tempEl.querySelector('strong');
@@ -987,9 +981,7 @@ async function fetchReactionsForMessages() {
             displayed.delete(tempId);
             messages.push(realMsg);
             displayed.add(realMsg.id);
-
         } catch (e) {
-            // Confirmation #1 failed → fail loudly
             showNotifyBanner('Send failed: ' + errorToString(e));
             if (tempEl) {
                 tempEl.style.animation = 'none';
@@ -1003,53 +995,36 @@ async function fetchReactionsForMessages() {
             return;
         }
 
-        // Confirmation #1 passed. Now run #2 and #3 asynchronously
-        // so they never block the UI, never re-render, and can only
-        // fail one DOM element at a time.
-
-        // ─── CONFIRMATION #2: Immediate GET verification (1s later) ───
-                pendingConfirms++;
-        setTimeout(async () => {
-            try {
-                const raw = await fetchMessages();
-                const found = raw.some(m => m.name === realMsg.id);
-                if (!found) {
-                    failMessage(realMsg.id, 'Message not found in Google Chat (check 2)');
-                }
-            } catch (e) { /* transient network — don't fail on network error */ }
-            finally { pendingConfirms--; }
-        }, 1000);
-
-        // ─── CONFIRMATION #3: Delayed stability check (4s later) ───
-        // Catches the rare case where Google accepts the POST then drops
-        // the message from the space's history.
-                pendingConfirms++;
-        setTimeout(async () => {
-            try {
-                const raw = await fetchMessages();
-                const found = raw.find(m => m.name === realMsg.id);
-                if (!found) {
-                    failMessage(realMsg.id, 'Message disappeared from Google Chat (check 3)');
-                }
-            } catch (e) { /* transient network — don't fail on network error */ }
-            finally { pendingConfirms--; }
-        }, 4000);
+        // ─── Poll until confirmed (adaptive), then unghost ───
+        verifyAndUnghost(realMsg.id, tempEl, 0);
 
         isSendingMessage = false;
     }
 
-    // Helper used by confirmations #2 and #3 to mark a message as failed
-    function failMessage(messageId, reason) {
-        const el = chatDiv.querySelector(`.message[data-id="${messageId}"]`);
-        if (el) {
-            el.style.animation = 'none';
-            el.style.background = '#d32f2f';
-            el.style.opacity = '1';
-            setTimeout(() => el.remove(), 2500);
-        }
-        messages = messages.filter(m => m.id !== messageId);
-        displayed.delete(messageId);
-        showNotifyBanner('⚠️ ' + reason);
+    // Adaptive verification: retries every ~250ms until confirmed (max 8 tries ≈ 2s).
+    // Unghosts the instant a check succeeds. Fails only after exhausting retries.
+    function verifyAndUnghost(realId, tempEl, attempt) {
+        pendingConfirms++;
+        setTimeout(async () => {
+            let ok = false;
+            try {
+                const raw = await fetchMessages();
+                ok = raw.some(m => m.name === realId);
+            } catch (e) { ok = false; }
+            pendingConfirms--;
+
+            if (ok) {
+                // Real feedback: confirmed → release ghost immediately
+                if (tempEl) { tempEl.style.opacity = '1'; tempEl.style.animation = 'none'; }
+                return;
+            }
+
+            if (attempt >= 7) {
+                failMessage(realId, 'Message not confirmed by Google after retries');
+                return;
+            }
+            verifyAndUnghost(realId, tempEl, attempt + 1);
+        }, 250);
     }
 
     /* ============================================================
