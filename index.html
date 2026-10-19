@@ -84,6 +84,11 @@
     0%, 100% { opacity: 0.55; }
     50% { opacity: 0.3; }
 }
+@keyframes incomingMsg {
+    0%   { opacity: 0; transform: translateY(12px) scale(0.96); }
+    60%  { opacity: 1; }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
         /* ---------- Login screen (Chatify public style) ---------- */
         #pinOverlay {
             position: fixed;inset:0;display:flex;align-items:center;justify-content:center;
@@ -770,70 +775,67 @@ async function fetchReactionsForMessages() {
 
 
         function renderOneMessage(msg, live) {
-        if (displayed.has(msg.id)) return;
-        displayed.add(msg.id);
+    if (displayed.has(msg.id)) return;
+    displayed.add(msg.id);
 
-        const el = document.createElement('div');
-        el.className = 'message ' + (msg.isMine ? 'myMessage' : 'otherMessage');
-        el.dataset.id = msg.id;
+    const el = document.createElement('div');
+    el.className = 'message ' + (msg.isMine ? 'myMessage' : 'otherMessage');
+    el.dataset.id = msg.id;
 
-        const avatarUrl = msg.avatarUrl || MY_AVATAR;
+    const avatarUrl = msg.avatarUrl || MY_AVATAR;
 
-                let contentHtml = '';
-        if (msg.attachment) {
-            const attName = (msg.attachment.attachmentDataRef && msg.attachment.attachmentDataRef.resourceName) || msg.attachment.name;
-            const cid = 'att-' + msg.id.replace(/[^a-z0-9]/gi, '');
-            // Render a placeholder, then load the real image with fetch + Blob URL
-            contentHtml = `<img id="${cid}" class="message-image" alt="attachment" loading="lazy" />`;
-            setTimeout(async () => {
-                try {
-                    const r = await fetch(`${WORKER_URL}/attachment?space=${encodeURIComponent(SPACE_ID)}&resource=${encodeURIComponent(attName)}&email=${encodeURIComponent(USER_EMAIL)}`, {
-                        headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
-                    });
-                    if (!r.ok) return;
-                    const blob = await r.blob();
-                    const url = URL.createObjectURL(blob);
-                    const img = document.getElementById(cid);
-                    if (img) img.src = url;
-                } catch (e) { /* silent */ }
-            }, 0);
-         } else if (msg.gifUrl) {
-            contentHtml = `<img src="${escapeHtml(msg.gifUrl)}" class="message-image" loading="lazy" alt="gif" />`;
-        } else if (msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
-            contentHtml = `<img src="${escapeHtml(msg.message)}" class="message-image" />`;
-        } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
-            contentHtml = `<a href="${escapeHtml(msg.message)}" target="_blank">${escapeHtml(msg.message)}</a>`;
-        } else {
-            contentHtml = escapeHtml(msg.message || '');
+    let contentHtml = '';
+    if (msg.attachment) {
+        const attName = (msg.attachment.attachmentDataRef && msg.attachment.attachmentDataRef.resourceName) || msg.attachment.name;
+        const cid = 'att-' + msg.id.replace(/[^a-z0-9]/gi, '');
+        contentHtml = `<img id="${cid}" class="message-image" alt="attachment" loading="lazy" />`;
+        setTimeout(async () => {
+            try {
+                const r = await fetch(`${WORKER_URL}/attachment?space=${encodeURIComponent(SPACE_ID)}&resource=${encodeURIComponent(attName)}&email=${encodeURIComponent(USER_EMAIL)}`, {
+                    headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
+                });
+                if (!r.ok) return;
+                const blob = await r.blob();
+                const url = URL.createObjectURL(blob);
+                const img = document.getElementById(cid);
+                if (img) img.src = url;
+            } catch (e) { /* silent */ }
+        }, 0);
+    } else if (msg.gifUrl) {
+        contentHtml = `<img src="${escapeHtml(msg.gifUrl)}" class="message-image" loading="lazy" alt="gif" />`;
+    } else if (msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
+        contentHtml = `<img src="${escapeHtml(msg.message)}" class="message-image" />`;
+    } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
+        contentHtml = `<a href="${escapeHtml(msg.message)}" target="_blank">${escapeHtml(msg.message)}</a>`;
+    } else {
+        contentHtml = escapeHtml(msg.message || '');
+    }
+
+    let quotedHtml = '';
+    if (msg.quoted) {
+        const preview = msg.quoted.snippet || 'Original message';
+        quotedHtml = `<div class="quoted-block"><span class="quoted-author">Replying to</span> <span style="opacity:0.7;">${escapeHtml(preview)}</span></div>`;
+    }
+
+    let reactionsHtml = '';
+    if (msg.reactions && msg.reactions.length) {
+        const grouped = {};
+        msg.reactions.forEach(r => {
+            const emoji = (r.emoji && (r.emoji.unicode || r.emoji)) || '❓';
+            if (!grouped[emoji]) grouped[emoji] = [];
+            grouped[emoji].push((r.user && r.user.displayName) || 'Someone');
+        });
+        const parts = [];
+        for (const emoji in grouped) {
+            parts.push(`<span class="reaction" data-emoji="${escapeHtml(emoji)}" data-msgid="${msg.id}" title="${escapeHtml(grouped[emoji].join(', '))}">${escapeHtml(emoji)} ${grouped[emoji].length}</span>`);
         }
+        reactionsHtml = `<div class="reactions">${parts.join('')}</div>`;
+    }
 
-        let quotedHtml = '';
-        if (msg.quoted) {
-            // Show the text if we have it, otherwise show "Replying to [Name]"
-            const preview = msg.quoted.snippet || 'Original message';
-            const author = msg.quoted.snippet ? 'Replying to' : 'Replying to';
-            quotedHtml = `<div class="quoted-block"><span class="quoted-author">${author}</span> <span style="opacity:0.7;">${escapeHtml(preview)}</span></div>`;
-        }
+    const emojiBtn = `<div class="emoji-picker-btn" data-msgid="${msg.id}">😀</div>`;
+    const replyBtn = `<button class="reply-btn" data-msgid="${msg.id}" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;margin-top:4px;opacity:0.7;">↳ Reply</button>`;
 
-        let reactionsHtml = '';
-        if (msg.reactions && msg.reactions.length) {
-            const grouped = {};
-            msg.reactions.forEach(r => {
-                const emoji = (r.emoji && (r.emoji.unicode || r.emoji)) || '❓';
-                if (!grouped[emoji]) grouped[emoji] = [];
-                grouped[emoji].push((r.user && r.user.displayName) || 'Someone');
-            });
-            const parts = [];
-            for (const emoji in grouped) {
-                parts.push(`<span class="reaction" data-emoji="${escapeHtml(emoji)}" data-msgid="${msg.id}" title="${escapeHtml(grouped[emoji].join(', '))}">${escapeHtml(emoji)} ${grouped[emoji].length}</span>`);
-            }
-            reactionsHtml = `<div class="reactions">${parts.join('')}</div>`;
-        }
-
-        const emojiBtn = `<div class="emoji-picker-btn" data-msgid="${msg.id}">😀</div>`;
-        const replyBtn = `<button class="reply-btn" data-msgid="${msg.id}" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;margin-top:4px;opacity:0.7;">↳ Reply</button>`;
-
-        el.innerHTML = `
+    el.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:10px;width:100%;">
         <img src="${escapeHtml(avatarUrl)}" alt="pfp" style="width:30px;height:30px;border-radius:50%;flex-shrink:0;">
         <div style="flex:1;min-width:0;">
@@ -846,47 +848,53 @@ async function fetchReactionsForMessages() {
             ${emojiBtn}
         </div>
     </div>`;
-        chatDiv.appendChild(el);
+    chatDiv.appendChild(el);
 
-        attachEmojiPicker(el, msg.id);
+    // ─── Animate ONLY incoming messages that arrive live (via polling) ───
+    // Not own messages, not the initial renderAll() batch.
+    if (live && !msg.isMine) {
+        el.style.animation = 'incomingMsg 0.38s cubic-bezier(0.22,1,0.36,1)';
+        el.addEventListener('animationend', () => { el.style.animation = ''; }, { once: true });
+    }
 
-        el.querySelectorAll('.reaction').forEach(r => {
-            r.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                await addReaction(msg.id, r.dataset.emoji);
-            });
+    attachEmojiPicker(el, msg.id);
+
+    el.querySelectorAll('.reaction').forEach(r => {
+        r.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await addReaction(msg.id, r.dataset.emoji);
         });
+    });
 
-        const replyEl = el.querySelector('.reply-btn');
-        if (replyEl) {
-            replyEl.addEventListener('click', (e) => {
-                e.stopPropagation();
-                replyContext = { 
-                    msgId: msg.id, 
-                    username: msg.username, 
-                    snippet: (msg.message || '').substring(0, 60),
-                    lastUpdateTime: msg.rawUpdateTime 
-                };
-                messageInput.placeholder = `Replying to ${msg.username}...`;
-                messageInput.focus();
-            });
-        }
+    const replyEl = el.querySelector('.reply-btn');
+    if (replyEl) {
+        replyEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            replyContext = {
+                msgId: msg.id,
+                username: msg.username,
+                snippet: (msg.message || '').substring(0, 60),
+                lastUpdateTime: msg.rawUpdateTime
+            };
+            messageInput.placeholder = `Replying to ${msg.username}...`;
+            messageInput.focus();
+        });
+    }
 
-        if (live) {
-    if (msg.isMine) {
-        scrollToBottom();
-        hideNewMessageBelowPill();
-    } else {
-        if (isNearBottom(200)) {
+    if (live) {
+        if (msg.isMine) {
             scrollToBottom();
             hideNewMessageBelowPill();
         } else {
-            // User is scrolled up — don't yank them. Show a pill instead.
-            showNewMessageBelowPill(msg.username, msg.message || '[media]');
+            if (isNearBottom(200)) {
+                scrollToBottom();
+                hideNewMessageBelowPill();
+            } else {
+                showNewMessageBelowPill(msg.username, msg.message || '[media]');
+            }
         }
     }
 }
-    }
     /* ============================================================
        Send
        ============================================================ */
@@ -1399,106 +1407,103 @@ async function sendGif(gifUrl, caption = '') {
        Polling
        ============================================================ */
     function startPolling() {
-        stopPolling();
-        pollTimer = setInterval(async () => {
-            if (isPolling) return;
-            if (isSendingMessage) return;
-            isPolling = true;
-            try {
-                const raw = await fetchMessages();
-                const list = raw.slice().reverse().map(normalizeMessage);
-                
-                const oldIds = messages.map(m => m.id).join('|');
-                const newIds = list.map(m => m.id).join('|');
-                
-               if (oldIds !== newIds) {
-    const wasNearBottom = isNearBottom();
-    const oldIdSet = new Set(messages.map(m => m.id));
+    stopPolling();
+    pollTimer = setInterval(async () => {
+        if (isPolling) return;
+        if (isSendingMessage) return;
+        isPolling = true;
+        try {
+            const raw = await fetchMessages();
+            const list = raw.slice().reverse().map(normalizeMessage);
 
-    // New messages present in `list` but not in current `messages`
-    const brandNew = list.filter(m => !oldIdSet.has(m.id));
+            const oldIds = messages.map(m => m.id).join('|');
+            const newIds = list.map(m => m.id).join('|');
 
-    // Did any existing message get REMOVED or was the ORDER changed?
-    // If so, we can't safely diff — fall back to full re-render.
-    const listIdSet = new Set(list.map(m => m.id));
-    const somethingRemoved = messages.some(m => !listIdSet.has(m.id));
-    const orderChanged = (() => {
-        const kept = list.map(m => m.id).filter(id => oldIdSet.has(id));
-        const prev = messages.map(m => m.id).filter(id => listIdSet.has(id));
-        return kept.join('|') !== prev.join('|');
-    })();
+            if (oldIds !== newIds) {
+                const wasNearBottom = isNearBottom();
+                const oldIdSet = new Set(messages.map(m => m.id));
+                const brandNew = list.filter(m => !oldIdSet.has(m.id));
 
-    // Notifications for genuinely new incoming messages
-    const brandNewIncoming = brandNew.filter(m => !m.isMine);
-    for (const m of brandNewIncoming) {
-        showDesktopNotification(m.username, m.message || '[media]', m.id);
-    }
-    if (brandNewIncoming.length > 0 && document.visibilityState !== 'visible') {
-        updateTitleUnread(true);
-    } else if (brandNewIncoming.length > 0 && !wasNearBottom) {
-        const last = brandNewIncoming[brandNewIncoming.length - 1];
-        showNewMessageBelowPill(last.username, last.message || '[media]');
-    }
+                const listIdSet = new Set(list.map(m => m.id));
+                const somethingRemoved = messages.some(m => !listIdSet.has(m.id));
+                const orderChanged = (() => {
+                    const kept = list.map(m => m.id).filter(id => oldIdSet.has(id));
+                    const prev = messages.map(m => m.id).filter(id => listIdSet.has(id));
+                    return kept.join('|') !== prev.join('|');
+                })();
 
-    const shouldFollow = wasNearBottom || brandNew.some(m => m.isMine);
+                const brandNewIncoming = brandNew.filter(m => !m.isMine);
+                for (const m of brandNewIncoming) {
+                    showDesktopNotification(m.username, m.message || '[media]', m.id);
+                }
+                if (brandNewIncoming.length > 0 && document.visibilityState !== 'visible') {
+                    updateTitleUnread(true);
+                } else if (brandNewIncoming.length > 0 && !wasNearBottom) {
+                    const last = brandNewIncoming[brandNewIncoming.length - 1];
+                    showNewMessageBelowPill(last.username, last.message || '[media]');
+                }
 
-    if (!somethingRemoved && !orderChanged && brandNew.length > 0) {
-        // ─── Incremental path: append only new messages ───
-        // Existing DOM nodes stay put, so no layout thrash, no bounce.
-        messages = list;
-        for (const m of brandNew) {
-            renderOneMessage(m, false); // `false` = don't auto-scroll inside render
-        }
-        if (shouldFollow) {
-            scrollToBottom();
-            hideNewMessageBelowPill();
-            if (document.visibilityState === 'visible') updateTitleUnread(false);
-        }
-    } else {
-        // ─── Fallback: structural change (deletion / reorder) ───
-        messages = list;
-        renderAll(false);
-        void chatDiv.scrollHeight;
-        if (shouldFollow) {
-            chatDiv.scrollTop = chatDiv.scrollHeight;
-            scrollToBottom();
-            hideNewMessageBelowPill();
-            if (document.visibilityState === 'visible') updateTitleUnread(false);
-        }
-    }
-} else {
-                    // Same messages, but reactions might have changed.
-                    let needsReRender = false;
-                    list.forEach(freshMsg => {
-                        const oldMsg = messages.find(m => m.id === freshMsg.id);
-                        if (oldMsg && JSON.stringify(oldMsg.reactions) !== JSON.stringify(freshMsg.reactions)) {
-                            oldMsg.reactions = freshMsg.reactions;
-                            needsReRender = true;
+                const shouldFollow = wasNearBottom || brandNew.some(m => m.isMine);
+
+                if (!somethingRemoved && !orderChanged && brandNew.length > 0) {
+                    messages = list;
+                    for (const m of brandNew) {
+                        // ─── live=true so incoming messages animate ───
+                        renderOneMessage(m, true);
+                    }
+                    if (shouldFollow) {
+                        scrollToBottom();
+                        hideNewMessageBelowPill();
+                        if (document.visibilityState === 'visible') updateTitleUnread(false);
+                    }
+                } else {
+                    messages = list;
+                    // Fallback: still animate incoming ones after re-render
+                    const animateIds = new Set(brandNewIncoming.map(m => m.id));
+                    renderAll(false);
+                    animateIds.forEach(id => {
+                        const el = chatDiv.querySelector(`.message[data-id="${id}"]`);
+                        if (el) {
+                            el.style.animation = 'incomingMsg 0.38s cubic-bezier(0.22,1,0.36,1)';
+                            el.addEventListener('animationend', () => { el.style.animation = ''; }, { once: true });
                         }
                     });
-                    if (needsReRender) {
-    const wasNearBottom = isNearBottom();
-    const oldScrollTop = chatDiv.scrollTop;
-    const oldScrollHeight = chatDiv.scrollHeight;
-
-    renderAll(false);
-    void chatDiv.scrollHeight; // flush layout
-
-    if (wasNearBottom) {
-        chatDiv.scrollTop = chatDiv.scrollHeight;
-        scrollToBottom();
-    } else {
-        const distanceFromBottom = oldScrollHeight - oldScrollTop;
-        chatDiv.scrollTop = Math.max(0, chatDiv.scrollHeight - distanceFromBottom);
-    }
-}
+                    void chatDiv.scrollHeight;
+                    if (shouldFollow) {
+                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                        scrollToBottom();
+                        hideNewMessageBelowPill();
+                        if (document.visibilityState === 'visible') updateTitleUnread(false);
+                    }
                 }
-            } catch (e) { /* silent */ }
-            finally { isPolling = false; }
-        }, 4000);
-
-        
-    }
+            } else {
+                let needsReRender = false;
+                list.forEach(freshMsg => {
+                    const oldMsg = messages.find(m => m.id === freshMsg.id);
+                    if (oldMsg && JSON.stringify(oldMsg.reactions) !== JSON.stringify(freshMsg.reactions)) {
+                        oldMsg.reactions = freshMsg.reactions;
+                        needsReRender = true;
+                    }
+                });
+                if (needsReRender) {
+                    const wasNearBottom = isNearBottom();
+                    const oldScrollTop = chatDiv.scrollTop;
+                    const oldScrollHeight = chatDiv.scrollHeight;
+                    renderAll(false);
+                    void chatDiv.scrollHeight;
+                    if (wasNearBottom) {
+                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                        scrollToBottom();
+                    } else {
+                        const distanceFromBottom = oldScrollHeight - oldScrollTop;
+                        chatDiv.scrollTop = Math.max(0, chatDiv.scrollHeight - distanceFromBottom);
+                    }
+                }
+            }
+        } catch (e) { /* silent */ }
+        finally { isPolling = false; }
+    }, 4000);
+}
     function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
     /* ============================================================
