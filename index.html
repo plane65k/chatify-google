@@ -261,7 +261,7 @@
 
         /* ---------- Notify banner ---------- */
         .notify-banner {
-            position:fixed;left:50%;transform:translateX(-50%);top:18px;
+             position:fixed;left:50%;transform:translateX(-50%);top:80px;
             background:linear-gradient(90deg,var(--button-background),#2e7d32);
             color:var(--button-text);padding:12px 18px;border-radius:999px;
             box-shadow:0 12px 30px var(--shadow-color);z-index:200;
@@ -842,7 +842,13 @@ let MY_AVATAR = ''; // <--- ADD THIS
     }
 
     async function sendToWorker(text, quoted = null) {
-        isSendingMessage = true; // LOCK POLLING
+        if (isSendingMessage) {
+            showNotifyBanner('Please wait for the previous message to send.');
+            return;
+        }
+        isSendingMessage = true;
+        lastRenderTime = Date.now(); // Block polling during send
+        
         const tempId = 'temp-' + makeId();
         
         const optimistic = {
@@ -859,7 +865,6 @@ let MY_AVATAR = ''; // <--- ADD THIS
         messages.push(optimistic);
         renderOneMessage(optimistic, true);
         
-        // Turn it into a Ghost
         let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
         if (tempEl) {
             tempEl.style.opacity = '0.55';
@@ -886,47 +891,62 @@ let MY_AVATAR = ''; // <--- ADD THIS
             const data = await res.json().catch(() => ({}));
             if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
 
-            // SUCCESS: Solidify the message immediately.
-            if (tempEl) {
-                tempEl.style.opacity = '1';
-                tempEl.style.animation = 'none'; // Stops the ghost pulse perfectly
-                
-                // Update the ghost DOM element to match the real message so it doesn't vanish
-                if (data.message && data.message.name) {
-                    tempEl.dataset.id = data.message.name;
-                    
-                    // Update the username from "You" to the actual Google Account name
-                    if (data.message.sender && data.message.sender.displayName) {
-                        const nameEl = tempEl.querySelector('strong');
-                        if (nameEl) nameEl.textContent = data.message.sender.displayName;
-                    }
+            if (!data.message || !data.message.name) {
+                throw new Error('Server did not return message ID');
+            }
+
+            // Strict Double Confirmation from Google (wait up to 3 seconds)
+            let confirmedMsg = null;
+            for (let attempt = 0; attempt < 5; attempt++) {
+                await new Promise(r => setTimeout(r, 600));
+                const raw = await fetchMessages();
+                const freshList = raw.map(normalizeMessage);
+                const found = freshList.find(m => m.id === data.message.name);
+                if (found) {
+                    confirmedMsg = found;
+                    break;
                 }
             }
 
-            // Update the local array silently so the next poll doesn't duplicate it
+            if (!confirmedMsg) {
+                throw new Error('Google did not confirm the message was saved.');
+            }
+
+            // Unghost ONLY after confirmation
+            if (tempEl) {
+                tempEl.style.opacity = '1';
+                tempEl.style.animation = 'none';
+                tempEl.dataset.id = confirmedMsg.id;
+                
+                if (confirmedMsg.sender && confirmedMsg.sender.displayName) {
+                    const nameEl = tempEl.querySelector('strong');
+                    if (nameEl) nameEl.textContent = confirmedMsg.sender.displayName;
+                } else if (confirmedMsg.username) {
+                    const nameEl = tempEl.querySelector('strong');
+                    if (nameEl) nameEl.textContent = confirmedMsg.username;
+                }
+            }
+
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
-            if (data.message) {
-                const realMsg = normalizeMessage(data.message);
-                messages.push(realMsg);
-                displayed.add(realMsg.id);
-            }
+            messages.push(confirmedMsg);
+            displayed.add(confirmedMsg.id);
 
         } catch (e) {
             showNotifyBanner('Send failed: ' + errorToString(e));
             
-            // If it fails, turn red and remove
             if (tempEl) {
                 tempEl.style.animation = 'none';
                 tempEl.style.background = '#d32f2f';
                 tempEl.style.opacity = '1';
-                setTimeout(() => tempEl.remove(), 1500);
+                setTimeout(() => tempEl.remove(), 2000);
             }
 
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
         } finally {
-            isSendingMessage = false; // UNLOCK POLLING
+            isSendingMessage = false;
+            lastRenderTime = Date.now(); // Reset render time after finishing
         }
     }
 
@@ -1003,30 +1023,101 @@ let MY_AVATAR = ''; // <--- ADD THIS
        ============================================================ */
     async function addReaction(messageId, emoji) {
         const msg = messages.find(m => m.id === messageId);
-        if (msg) {
-            msg.reactions = msg.reactions || [];
-            msg.reactions.push({ emoji: { unicode: emoji }, user: { displayName: DISPLAY_NAME } });
-            displayed.delete(messageId);
-            const el = chatDiv.querySelector(`.message[data-id="${messageId}"]`);
-            if (el) { el.remove(); renderOneMessage(msg, false); }
+        if (!msg) return;
+
+        // Optimistic update
+        msg.reactions = msg.reactions || [];
+        msg.reactions.push({ emoji: { unicode: emoji }, user: { displayName: DISPLAY_NAME } });
+        
+        // Update ONLY the reactions block in the DOM to prevent jumping
+        const el = chatDiv.querySelector(`.message[data-id="${messageId}"]`);
+        if (el) {
+            const reactionsContainer = el.querySelector('.reactions') || document.createElement('div');
+            reactionsContainer.className = 'reactions';
+            
+            const grouped = {};
+            msg.reactions.forEach(r => {
+                const em = (r.emoji && (r.emoji.unicode || r.emoji)) || '❓';
+                if (!grouped[em]) grouped[em] = [];
+                grouped[em].push((r.user && r.user.displayName) || 'Someone');
+            });
+            let parts = [];
+            for (const em in grouped) {
+                parts.push(`<span class="reaction" data-emoji="${escapeHtml(em)}" data-msgid="${msg.id}" title="${escapeHtml(grouped[em].join(', '))}">${escapeHtml(em)} ${grouped[em].length}</span>`);
+            }
+            reactionsContainer.innerHTML = parts.join('');
+            
+            if (!el.querySelector('.reactions')) {
+                const timestamp = el.querySelector('.timestamp');
+                if (timestamp) timestamp.insertAdjacentElement('afterend', reactionsContainer);
+            }
         }
 
         try {
+            // Construct the full resource name safely
+            let fullMessageName = messageId;
+            if (!messageId.startsWith('spaces/')) {
+                const spacePart = SPACE_ID.startsWith('spaces/') ? SPACE_ID : `spaces/${SPACE_ID}`;
+                fullMessageName = `${spacePart}/messages/${messageId}`;
+            }
+
             const res = await fetch(`${WORKER_URL}/react`, {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + SESSION_TOKEN
-    },
-    body: JSON.stringify({ message: messageId, emoji: emoji })
-});
-            if (!res.ok) throw new Error('Reaction failed');
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + SESSION_TOKEN
+                },
+                body: JSON.stringify({ message: fullMessageName, emoji: emoji })
+            });
+            
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) {
+                throw new Error(errorToString(data.error) || 'Reaction failed');
+            }
+            
+            // Success: Fetch fresh state silently from Google
+            const raw = await fetchMessages();
+            const freshList = raw.slice().reverse().map(normalizeMessage);
+            const freshMsg = freshList.find(m => m.id === messageId);
+            
+            if (freshMsg) {
+                const idx = messages.findIndex(m => m.id === messageId);
+                if (idx !== -1) messages[idx] = freshMsg;
+                
+                // Update just the reactions part again with real data
+                const currentEl = chatDiv.querySelector(`.message[data-id="${messageId}"]`);
+                if (currentEl) {
+                    const currentReactions = currentEl.querySelector('.reactions');
+                    if (currentReactions) currentReactions.remove();
+                    
+                    const newReactionsContainer = document.createElement('div');
+                    newReactionsContainer.className = 'reactions';
+                    const grouped = {};
+                    freshMsg.reactions.forEach(r => {
+                        const em = (r.emoji && (r.emoji.unicode || r.emoji)) || '❓';
+                        if (!grouped[em]) grouped[em] = [];
+                        grouped[em].push((r.user && r.user.displayName) || 'Someone');
+                    });
+                    let parts = [];
+                    for (const em in grouped) {
+                        parts.push(`<span class="reaction" data-emoji="${escapeHtml(em)}" data-msgid="${freshMsg.id}" title="${escapeHtml(grouped[em].join(', '))}">${escapeHtml(em)} ${grouped[em].length}</span>`);
+                    }
+                    newReactionsContainer.innerHTML = parts.join('');
+                    const timestamp = currentEl.querySelector('.timestamp');
+                    if (timestamp) timestamp.insertAdjacentElement('afterend', newReactionsContainer);
+                }
+            }
         } catch (e) {
+            // Revert on failure
+            msg.reactions.pop(); 
+            const currentEl = chatDiv.querySelector(`.message[data-id="${messageId}"]`);
+            if (currentEl) {
+                const currentReactions = currentEl.querySelector('.reactions');
+                if (currentReactions) currentReactions.remove();
+            }
             showNotifyBanner('Reaction failed: ' + errorToString(e));
-            await loadMessages();
         }
     }
-
     /* ============================================================
        Emoji picker
        ============================================================ */
@@ -1103,22 +1194,54 @@ let MY_AVATAR = ''; // <--- ADD THIS
             try {
                 const raw = await fetchMessages();
                 const list = raw.slice().reverse().map(normalizeMessage);
+                
                 const oldIds = messages.map(m => m.id).join('|');
                 const newIds = list.map(m => m.id).join('|');
+                
                 if (oldIds !== newIds) {
-                    const atBottom = chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < 150;
-                    messages = list;
-                    renderAll(atBottom);
-                    if (document.hidden && list.length) {
+                    // Detect new messages for notifications BEFORE rendering
+                    if (list.length > messages.length && document.hidden) {
                         const last = list[list.length - 1];
                         if (last && !last.isMine) {
                             showNotifyBanner(`${last.username}: ${(last.message || '').substring(0, 80)}`);
                         }
                     }
+
+                    // Structure changed, do a full refresh with scroll preservation
+                    const isAtBottom = chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < 150;
+                    const oldScrollTop = chatDiv.scrollTop;
+                    const oldScrollHeight = chatDiv.scrollHeight;
+
+                    messages = list;
+                    renderAll(false);
+
+                    if (isAtBottom) {
+                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                    } else {
+                        const newScrollHeight = chatDiv.scrollHeight;
+                        chatDiv.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+                    }
+                } else {
+                    // Same messages, but reactions might have changed.
+                    let needsReRender = false;
+                    list.forEach(freshMsg => {
+                        const oldMsg = messages.find(m => m.id === freshMsg.id);
+                        if (oldMsg && JSON.stringify(oldMsg.reactions) !== JSON.stringify(freshMsg.reactions)) {
+                            oldMsg.reactions = freshMsg.reactions;
+                            needsReRender = true;
+                        }
+                    });
+                    if (needsReRender) {
+                        const oldScrollTop = chatDiv.scrollTop;
+                        const oldScrollHeight = chatDiv.scrollHeight;
+                        renderAll(false);
+                        // Restore scroll
+                        chatDiv.scrollTop = oldScrollTop + (chatDiv.scrollHeight - oldScrollHeight);
+                    }
                 }
             } catch (e) { /* silent */ }
             finally { isPolling = false; }
-        }, 8000);
+        }, 4000);
     }
     function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
