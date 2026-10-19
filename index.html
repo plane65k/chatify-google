@@ -209,10 +209,12 @@
         /* ---------- GIF keyboard ---------- */
         .gif-btn {
             background:rgba(69,190,74,0.8);border:none;color:white;font-size:1.5rem;
-            padding:0.8rem;width:3rem;height:3rem;border-radius:50%;cursor:pointer;
-            display:flex;align-items:center;justify-content:center;transition:all 0.25s ease;margin-right:8px;
+            padding:0;width:3rem;height:3rem;border-radius:50%;cursor:pointer;
+            display:flex;align-items:center;justify-content:center;
+            transition:all 0.25s ease;flex-shrink:0;margin-left:6px;
         }
         .gif-btn:hover {transform:scale(1.15);box-shadow:0 7px 25px rgba(69,190,74,0.7)}
+        
         .gif-keyboard {
             position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
             width:90%;max-width:500px;min-width:280px;height:400px;min-height:300px;
@@ -416,11 +418,11 @@
     <div id="loading"><div class="loader"></div></div>
     <div id="chat" role="log" aria-live="polite"></div>
 
-    <footer>
+        <footer>
         <input id="messageInput" placeholder="Type a message..." />
         <button id="gifBtn" class="gif-btn">🎬</button>
-        <button id="imageBtn" style="background:rgba(69,190,74,0.8);border:none;color:white;font-size:1.5rem;width:3rem;height:3rem;border-radius:50%;cursor:pointer;">🖼️</button>
-        <button id="sendBtn" style="background:rgba(69,190,74,0.8);border:none;color:white;font-size:1.5rem;width:3rem;height:3rem;border-radius:50%;cursor:pointer;">➤</button>
+        <button id="imageBtn" class="gif-btn">🖼️</button>
+        <button id="sendBtn" class="gif-btn">➤</button>
     </footer>
 </div>
 
@@ -877,30 +879,29 @@ async function fetchReactionsForMessages() {
         await sendToWorker(text, quoted);
     }
 
-    async function sendToWorker(text, quoted = null) {
+        async function sendToWorker(text, quoted = null) {
         if (isSendingMessage) {
             showNotifyBanner('Please wait for the previous message to send.');
             return;
         }
         isSendingMessage = true;
-        lastRenderTime = Date.now(); // Block polling during send
-        
+
         const tempId = 'temp-' + makeId();
-        
+
         const optimistic = {
             id: tempId,
             username: DISPLAY_NAME,
-            avatarUrl: MY_AVATAR, 
+            avatarUrl: MY_AVATAR,
             message: text,
             timestamp: formatTime(new Date().toISOString()),
             isMine: true,
             reactions: [],
             quoted: quoted ? { name: quoted.msgId, snippet: quoted.snippet } : null
         };
-        
+
         messages.push(optimistic);
         renderOneMessage(optimistic, true);
-        
+
         let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
         if (tempEl) {
             tempEl.style.opacity = '0.55';
@@ -909,16 +910,19 @@ async function fetchReactionsForMessages() {
 
         chatDiv.scrollTop = chatDiv.scrollHeight;
 
+        let realMsg = null;
+
         try {
             const payload = { space: SPACE_ID, text: text };
             if (quoted) {
                 payload.quotedMessageName = quoted.msgId;
-                payload.quotedLastUpdateTime = quoted.lastUpdateTime; 
+                payload.quotedLastUpdateTime = quoted.lastUpdateTime;
             }
 
+            // ─── CONFIRMATION #1: Server accepted the message ───
             const res = await fetch(`${WORKER_URL}/send`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + SESSION_TOKEN
                 },
@@ -931,59 +935,82 @@ async function fetchReactionsForMessages() {
                 throw new Error('Server did not return message ID');
             }
 
-            // Strict Double Confirmation from Google (wait up to 3 seconds)
-            let confirmedMsg = null;
-            for (let attempt = 0; attempt < 5; attempt++) {
-                await new Promise(r => setTimeout(r, 600));
-                const raw = await fetchMessages();
-                const freshList = raw.map(normalizeMessage);
-                const found = freshList.find(m => m.id === data.message.name);
-                if (found) {
-                    confirmedMsg = found;
-                    break;
-                }
-            }
+            realMsg = normalizeMessage(data.message);
 
-            if (!confirmedMsg) {
-                throw new Error('Google did not confirm the message was saved.');
-            }
-
-            // Unghost ONLY after confirmation
+            // Solidify the ghost in place — no re-render, no flicker
             if (tempEl) {
                 tempEl.style.opacity = '1';
                 tempEl.style.animation = 'none';
-                tempEl.dataset.id = confirmedMsg.id;
-                
-                if (confirmedMsg.sender && confirmedMsg.sender.displayName) {
+                tempEl.dataset.id = realMsg.id;
+                if (realMsg.username) {
                     const nameEl = tempEl.querySelector('strong');
-                    if (nameEl) nameEl.textContent = confirmedMsg.sender.displayName;
-                } else if (confirmedMsg.username) {
-                    const nameEl = tempEl.querySelector('strong');
-                    if (nameEl) nameEl.textContent = confirmedMsg.username;
+                    if (nameEl) nameEl.textContent = realMsg.username;
                 }
             }
 
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
-            messages.push(confirmedMsg);
-            displayed.add(confirmedMsg.id);
+            messages.push(realMsg);
+            displayed.add(realMsg.id);
 
         } catch (e) {
+            // Confirmation #1 failed → fail loudly
             showNotifyBanner('Send failed: ' + errorToString(e));
-            
             if (tempEl) {
                 tempEl.style.animation = 'none';
                 tempEl.style.background = '#d32f2f';
                 tempEl.style.opacity = '1';
                 setTimeout(() => tempEl.remove(), 2000);
             }
-
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
-        } finally {
             isSendingMessage = false;
-            lastRenderTime = Date.now(); // Reset render time after finishing
+            return;
         }
+
+        // Confirmation #1 passed. Now run #2 and #3 asynchronously
+        // so they never block the UI, never re-render, and can only
+        // fail one DOM element at a time.
+
+        // ─── CONFIRMATION #2: Immediate GET verification (1s later) ───
+        setTimeout(async () => {
+            try {
+                const raw = await fetchMessages();
+                const found = raw.some(m => m.name === realMsg.id);
+                if (!found) {
+                    failMessage(realMsg.id, 'Message not found in Google Chat (check 2)');
+                }
+            } catch (e) { /* transient network — don't fail on network error */ }
+        }, 1000);
+
+        // ─── CONFIRMATION #3: Delayed stability check (4s later) ───
+        // Catches the rare case where Google accepts the POST then drops
+        // the message from the space's history.
+        setTimeout(async () => {
+            try {
+                const raw = await fetchMessages();
+                const found = raw.find(m => m.name === realMsg.id);
+                if (!found) {
+                    failMessage(realMsg.id, 'Message disappeared from Google Chat (check 3)');
+                }
+            } catch (e) { /* transient network — don't fail on network error */ }
+        }, 4000);
+
+        isSendingMessage = false;
+    }
+
+    // Helper used by confirmations #2 and #3 to mark a message as failed
+    function failMessage(messageId, reason) {
+        const el = chatDiv.querySelector(`.message[data-id="${messageId}"]`);
+        if (el) {
+            el.style.animation = 'none';
+            el.style.background = '#d32f2f';
+            el.style.opacity = '1';
+            setTimeout(() => el.remove(), 2500);
+        }
+        messages = messages.filter(m => m.id !== messageId);
+        displayed.delete(messageId);
+        showNotifyBanner('⚠️ ' + reason);
     }
 
     /* ============================================================
