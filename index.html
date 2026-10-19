@@ -995,38 +995,114 @@ async function fetchReactionsForMessages() {
             return;
         }
 
-        // ─── Poll until confirmed (adaptive), then unghost ───
+               // ─── Poll until confirmed (adaptive), then unghost ───
+        // isSendingMessage stays true until verifyAndUnghost releases it,
+        // preventing a second send from racing the first one's settlement.
         verifyAndUnghost(realMsg.id, tempEl, 0);
-
-        isSendingMessage = false;
     }
 
     // Adaptive verification: retries every ~250ms until confirmed (max 8 tries ≈ 2s).
     // Unghosts the instant a check succeeds. Fails only after exhausting retries.
-    function verifyAndUnghost(realId, tempEl, attempt) {
+    // Insert a message into `messages` at chronological position, and
+    // into the DOM just before the first message whose timestamp is later.
+    function insertMessageChronologically(msg) {
+        // Find insertion index in messages array
+        let idx = messages.length;
+        for (let i = 0; i < messages.length; i++) {
+            const t = messages[i].rawUpdateTime || '';
+            if (t && msg.rawUpdateTime && t > msg.rawUpdateTime) { idx = i; break; }
+        }
+        messages.splice(idx, 0, msg);
+
+        // Find the DOM node of the next message (if any), insert before it
+        const nextMsg = messages[idx + 1];
+        const nextEl = nextMsg ? chatDiv.querySelector('.message[data-id="' + CSS.escape(nextMsg.id) + '"]') : null;
+
+        // Build the element without auto-scrolling
+        const wasNearBottom = isNearBottom();
+        const prevDisplayed = displayed.has(msg.id);
+        displayed.delete(msg.id); // allow renderOneMessage to rebuild it
+        // Manually create & insert
+        const before = chatDiv.children.length;
+        // Temporarily mark so renderOneMessage doesn't append at end
+        const marker = document.createElement('div');
+        marker.style.display = 'none';
+        if (nextEl) chatDiv.insertBefore(marker, nextEl);
+        else chatDiv.appendChild(marker);
+
+        // Render into the chat, then move
+        renderOneMessage(msg, false);
+        const newEl = chatDiv.querySelector('.message[data-id="' + CSS.escape(msg.id) + '"]');
+        if (newEl && marker.parentNode) {
+            chatDiv.insertBefore(newEl, marker);
+            marker.remove();
+        } else if (marker.parentNode) {
+            marker.remove();
+        }
+
+        // Animate as incoming
+        if (newEl && !msg.isMine) {
+            newEl.style.animation = 'incomingMsg 0.38s cubic-bezier(0.22,1,0.36,1)';
+            newEl.addEventListener('animationend', () => { newEl.style.animation = ''; }, { once: true });
+        }
+
+        return { wasNearBottom, newEl };
+    }
+
+    // Adaptive verification: each tick surfaces any other-user messages
+    // (inserted chronologically, may appear above the ghost), THEN checks
+    // whether our own message has been confirmed. Unghost on confirm.
+       function verifyAndUnghost(realId, tempEl, attempt) {
         pendingConfirms++;
         setTimeout(async () => {
-            let ok = false;
-            try {
-                const raw = await fetchMessages();
-                ok = raw.some(m => m.name === realId);
-            } catch (e) { ok = false; }
+            let raw = null;
+            try { raw = await fetchMessages(); } catch (e) { raw = null; }
             pendingConfirms--;
 
-            if (ok) {
-                // Real feedback: confirmed → release ghost immediately
-                if (tempEl) { tempEl.style.opacity = '1'; tempEl.style.animation = 'none'; }
-                return;
+            if (Array.isArray(raw)) {
+                const list = raw.slice().reverse().map(normalizeMessage);
+                const knownIds = new Set(messages.map(m => m.id));
+
+                // ── Priority 1: any other-user message we haven't shown yet ──
+                const arrivals = list.filter(m =>
+                    !knownIds.has(m.id) && !m.isMine && m.id !== realId
+                );
+
+                if (arrivals.length > 0) {
+                    const wasNearBottom = isNearBottom();
+                    arrivals.sort((a, b) => (a.rawUpdateTime || '').localeCompare(b.rawUpdateTime || ''));
+                    for (const m of arrivals) {
+                        insertMessageChronologically(m);
+                        showDesktopNotification(m.username, m.message || '[media]', m.id);
+                    }
+                    if (document.visibilityState === 'visible' && wasNearBottom) {
+                        scrollToBottom();
+                        hideNewMessageBelowPill();
+                    } else if (!wasNearBottom) {
+                        const last = arrivals[arrivals.length - 1];
+                        showNewMessageBelowPill(last.username, last.message || '[media]');
+                    }
+                }
+
+                // ── Priority 2: check for our own message ──
+                const confirmed = raw.some(m => m.name === realId);
+                if (confirmed) {
+                    if (tempEl) { tempEl.style.opacity = '1'; tempEl.style.animation = 'none'; }
+                    // Cooldown: keep isSendingMessage locked for a short stabilisation
+                    // window so a second send can't race the next poll's render.
+                    setTimeout(() => { isSendingMessage = false; }, 400);
+                    return;
+                }
             }
 
             if (attempt >= 7) {
                 failMessage(realId, 'Message not confirmed by Google after retries');
+                isSendingMessage = false;
                 return;
             }
             verifyAndUnghost(realId, tempEl, attempt + 1);
         }, 250);
     }
-
     /* ============================================================
        Image upload (via your Worker /upload then /send)
        ============================================================ */
@@ -1403,7 +1479,6 @@ async function sendGif(gifUrl, caption = '') {
                 const wasNearBottom = isNearBottom();
                 const oldIdSet = new Set(messages.map(m => m.id));
                 const brandNew = list.filter(m => !oldIdSet.has(m.id));
-
                 const listIdSet = new Set(list.map(m => m.id));
                 const somethingRemoved = messages.some(m => !listIdSet.has(m.id));
                 const orderChanged = (() => {
@@ -1426,9 +1501,9 @@ async function sendGif(gifUrl, caption = '') {
                 const shouldFollow = wasNearBottom || brandNew.some(m => m.isMine);
 
                 if (!somethingRemoved && !orderChanged && brandNew.length > 0) {
+                    // ─── Incremental append: never touches existing DOM ───
                     messages = list;
                     for (const m of brandNew) {
-                        // ─── live=true so incoming messages animate ───
                         renderOneMessage(m, true);
                     }
                     if (shouldFollow) {
@@ -1436,58 +1511,109 @@ async function sendGif(gifUrl, caption = '') {
                         hideNewMessageBelowPill();
                         if (document.visibilityState === 'visible') updateTitleUnread(false);
                     }
-                } else {
-                    if (pendingConfirms > 0) {
-                        isPolling = false;
-                        return;
+                } else if (!somethingRemoved && orderChanged) {
+                    // ─── Order changed: move existing DOM nodes, don't rebuild ───
+                    messages = list;
+                    const orderedEls = list
+                        .map(m => chatDiv.querySelector('.message[data-id="' + CSS.escape(m.id) + '"]'))
+                        .filter(Boolean);
+                    orderedEls.forEach(el => chatDiv.appendChild(el));
+                    if (shouldFollow) {
+                        scrollToBottom();
+                        hideNewMessageBelowPill();
+                        if (document.visibilityState === 'visible') updateTitleUnread(false);
+                    }
+                } else if (somethingRemoved) {
+                    // ─── Deletion: only remove the specific nodes ───
+                    const keptIds = new Set(list.map(m => m.id));
+                    for (const oldId of oldIdSet) {
+                        if (!keptIds.has(oldId)) {
+                            const el = chatDiv.querySelector('.message[data-id="' + CSS.escape(oldId) + '"]');
+                            if (el) el.remove();
+                            displayed.delete(oldId);
+                        }
                     }
                     messages = list;
-                    // Fallback: still animate incoming ones after re-render
-                    const animateIds = new Set(brandNewIncoming.map(m => m.id));
-                    renderAll(false);
-                    animateIds.forEach(id => {
-                        const el = chatDiv.querySelector(`.message[data-id="${id}"]`);
-                        if (el) {
-                            el.style.animation = 'incomingMsg 0.38s cubic-bezier(0.22,1,0.36,1)';
-                            el.addEventListener('animationend', () => { el.style.animation = ''; }, { once: true });
-                        }
-                    });
-                    void chatDiv.scrollHeight;
+                    // Append any brand-new that appeared alongside the deletion
+                    for (const m of brandNew) {
+                        if (!displayed.has(m.id)) renderOneMessage(m, true);
+                    }
                     if (shouldFollow) {
-                        chatDiv.scrollTop = chatDiv.scrollHeight;
                         scrollToBottom();
                         hideNewMessageBelowPill();
                         if (document.visibilityState === 'visible') updateTitleUnread(false);
                     }
                 }
             } else {
-                let needsReRender = false;
+                // ─── Same ids: check for reaction / edit deltas only ───
+                let reactionChanges = false;
                 list.forEach(freshMsg => {
                     const oldMsg = messages.find(m => m.id === freshMsg.id);
-                    if (oldMsg && JSON.stringify(oldMsg.reactions) !== JSON.stringify(freshMsg.reactions)) {
+                    if (!oldMsg) return;
+                    if (JSON.stringify(oldMsg.reactions) !== JSON.stringify(freshMsg.reactions)) {
                         oldMsg.reactions = freshMsg.reactions;
-                        needsReRender = true;
+                        reactionChanges = true;
+                        updateReactionsInDom(freshMsg.id, freshMsg.reactions);
+                    }
+                    // If Google ever exposes an edit timestamp / text change:
+                    if (oldMsg.message !== freshMsg.message) {
+                        oldMsg.message = freshMsg.message;
+                        // Only this message's bubble re-renders
+                        rerenderSingleMessage(freshMsg.id);
                     }
                 });
-                if (needsReRender) {
-                    const wasNearBottom = isNearBottom();
-                    const oldScrollTop = chatDiv.scrollTop;
-                    const oldScrollHeight = chatDiv.scrollHeight;
-                    renderAll(false);
-                    void chatDiv.scrollHeight;
-                    if (wasNearBottom) {
-                        chatDiv.scrollTop = chatDiv.scrollHeight;
-                        scrollToBottom();
-                    } else {
-                        const distanceFromBottom = oldScrollHeight - oldScrollTop;
-                        chatDiv.scrollTop = Math.max(0, chatDiv.scrollHeight - distanceFromBottom);
-                    }
-                }
+                // No full re-render — the previous behavior wiped every bubble
             }
         } catch (e) { /* silent */ }
         finally { isPolling = false; }
     }, 4000);
 }
+    // Rebuild just the .reactions block for one message, leaving the bubble intact.
+    function updateReactionsInDom(messageId, reactions) {
+        const el = chatDiv.querySelector('.message[data-id="' + CSS.escape(messageId) + '"]');
+        if (!el) return;
+        const old = el.querySelector('.reactions');
+        if (old) old.remove();
+        if (!reactions || !reactions.length) return;
+        const grouped = {};
+        reactions.forEach(r => {
+            const em = (r.emoji && (r.emoji.unicode || r.emoji)) || '❓';
+            if (!grouped[em]) grouped[em] = [];
+            grouped[em].push((r.user && r.user.displayName) || 'Someone');
+        });
+        const container = document.createElement('div');
+        container.className = 'reactions';
+        const parts = [];
+        for (const em in grouped) {
+            parts.push('<span class="reaction" data-emoji="' + escapeHtml(em) + '" data-msgid="' + messageId + '" title="' + escapeHtml(grouped[em].join(', ')) + '">' + escapeHtml(em) + ' ' + grouped[em].length + '</span>');
+        }
+        container.innerHTML = parts.join('');
+        const timestamp = el.querySelector('.timestamp');
+        if (timestamp) timestamp.insertAdjacentElement('afterend', container);
+        container.querySelectorAll('.reaction').forEach(r => {
+            r.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await addReaction(messageId, r.dataset.emoji);
+            });
+        });
+    }
+
+    // Re-render ONLY one message in place (used for edits).
+    function rerenderSingleMessage(messageId) {
+        const oldEl = chatDiv.querySelector('.message[data-id="' + CSS.escape(messageId) + '"]');
+        if (!oldEl) return;
+        const msg = messages.find(m => m.id === messageId);
+        if (!msg) return;
+        // Detach old, clear displayed flag, re-render, insert at same spot
+        const nextSibling = oldEl.nextSibling;
+        oldEl.remove();
+        displayed.delete(messageId);
+        renderOneMessage(msg, false);
+        const newEl = chatDiv.querySelector('.message[data-id="' + CSS.escape(messageId) + '"]');
+        if (newEl && nextSibling && nextSibling.parentNode === chatDiv) {
+            chatDiv.insertBefore(newEl, nextSibling);
+        }
+    }
     function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
     /* ============================================================
