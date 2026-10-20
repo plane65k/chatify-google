@@ -486,7 +486,7 @@
   let USER_EMAIL = '';
 let SPACE_ID = '';
 let DISPLAY_NAME = 'You';
-let SESSION_TOKEN = sessionStorage.getItem('cg_token') || '';
+let SESSION_TOKEN = localStorage.getItem('cg_token') || '';
 let MY_AVATAR = ''; // <--- ADD THIS
     let messages = [];
     let displayed = new Set();
@@ -619,8 +619,8 @@ document.addEventListener('visibilitychange', () => {
             throw new Error(loginData.error || 'Login failed');
         }
 
-        SESSION_TOKEN = loginData.token;
-        sessionStorage.setItem('cg_token', SESSION_TOKEN);
+                SESSION_TOKEN = loginData.token;
+        localStorage.setItem('cg_token', SESSION_TOKEN);
 
         USER_EMAIL = email;
         SPACE_ID = space;
@@ -1626,10 +1626,10 @@ async function sendGif(gifUrl, caption = '') {
        Buttons
        ============================================================ */
     refreshBtn.addEventListener('click', () => loadMessages());
-    signoutBtn.addEventListener('click', () => {
+        signoutBtn.addEventListener('click', () => {
     stopPolling();
     SESSION_TOKEN = '';
-    sessionStorage.removeItem('cg_token');
+    localStorage.removeItem('cg_token'); // <-- Clears the persistent token
     chatApp.style.display = 'none';
     pinOverlay.style.display = 'flex';
     messages = []; displayed.clear(); chatDiv.innerHTML = '';
@@ -1933,7 +1933,7 @@ async function sendGif(gifUrl, caption = '') {
     const email = localStorage.getItem('cg_email');
     const space = localStorage.getItem('cg_space');
     const name = localStorage.getItem('cg_name');
-    const token = sessionStorage.getItem('cg_token');
+        const token = localStorage.getItem('cg_token');
     if (!email || !space || !token) return;
 
     USER_EMAIL = email;
