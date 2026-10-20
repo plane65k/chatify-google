@@ -423,6 +423,7 @@
             <button id="toggleThemeBtn" class="button-clear">Toggle Theme</button>
             <button id="refreshBtn" class="button-clear">Refresh</button>
             <button id="backgroundBtn" class="button-clear">Background</button>
+            <button id="filterBtn" class="button-clear">Filter</button> <!-- ADD THIS -->
             <button id="signoutBtn" class="button-clear" style="color:salmon">Sign out</button>
         </div>
     </header>
@@ -470,7 +471,27 @@
 
 <!-- Notify banner -->
 <div id="notifyBanner" class="notify-banner"></div>
+<!-- Filter Modal -->
+<!-- Filter Modal -->
+<div id="filterModal" class="profile-modal">
+    <div class="profile-modal-content" style="max-width:480px !important;width:92% !important;padding:20px !important;">
+        <h3 style="margin-top:0;">🛡️ Content Filter Settings</h3>
+        <p style="font-size:12px;opacity:0.7;margin:0 0 12px 0;">
+            Add words to be censored in chat. (Note: Default system words cannot be removed).
+        </p>
+        
+        <div id="filterActiveMsg" style="font-size:12px; font-weight:bold; margin-bottom:10px; color:var(--button-background);">
+            Loading filter status...
+        </div>
 
+        <textarea id="bannedWordsInput" placeholder="Enter additional banned words, separated by commas..." style="width:100%;height:120px;padding:10px;border-radius:12px;border:1px solid var(--border-color);background:var(--secondary-background);color:var(--text-color);font-size:14px;resize:none;box-sizing:border-box;margin-bottom:10px;"></textarea>
+        
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button id="cancelFilterBtn" style="padding:8px 16px;border-radius:8px;border:none;background:#ccc;color:#333;cursor:pointer;font-weight:600;">Close</button>
+            <button id="saveFilterBtn" style="padding:8px 16px;border-radius:8px;border:none;background:var(--button-background);color:var(--button-text);cursor:pointer;font-weight:600;">Save User Words</button>
+        </div>
+    </div>
+</div>
 <script>
     /* ============================================================
        GOOGLE CHAT API (via your existing Worker)
@@ -815,7 +836,7 @@ async function fetchReactionsForMessages() {
     } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
         contentHtml = '<a href="' + escapeHtml(msg.message) + '" target="_blank">' + escapeHtml(msg.message) + '</a>';
     } else {
-        contentHtml = escapeHtml(msg.message || '');
+        contentHtml = escapeHtml(window.filterMessageText ? window.filterMessageText(msg.message || '') : (msg.message || ''));
     }
 
     let quotedHtml = '';
@@ -912,6 +933,10 @@ async function fetchReactionsForMessages() {
 
     async function sendMessage() {
         const text = (messageInput.value || '').trim();
+if (window.filterMessageText) {
+    // Apply filter before sending so it hits the server censored
+    messageInput.value = window.filterMessageText(text);
+}
         if (!text && !replyContext) return;
         messageInput.value = '';
         const quoted = replyContext;
@@ -1304,7 +1329,9 @@ async function sendGif(gifUrl, caption = '') {
     /* ============================================================
        Reactions
        ============================================================ */
-    async function addReaction(messageId, emoji) {
+        async function addReaction(messageId, emoji) {
+        const _domEl0 = chatDiv.querySelector(`.message[data-id="${CSS.escape(messageId)}"]`);
+        if (_domEl0 && _domEl0.dataset.id) messageId = _domEl0.dataset.id;
         const msg = messages.find(m => m.id === messageId);
         if (!msg) return;
 
@@ -1417,9 +1444,9 @@ async function sendGif(gifUrl, caption = '') {
         QUICK_EMOJIS.forEach(emoji => {
             const span = document.createElement('span');
             span.textContent = emoji;
-            span.addEventListener('click', (e) => {
+                        span.addEventListener('click', (e) => {
                 e.stopPropagation();
-                addReaction(messageId, emoji);
+                addReaction(messageEl.dataset.id || messageId, emoji);
                 container.style.display = 'none';
             });
             grid.appendChild(span);
@@ -1438,9 +1465,9 @@ async function sendGif(gifUrl, caption = '') {
                 e.preventDefault();
                 const raw = input.value.trim();
                 if (!raw) return;
-                const emoji = Array.from(raw)[0];
+                                const emoji = Array.from(raw)[0];
                 input.value = '';
-                addReaction(messageId, emoji);
+                addReaction(messageEl.dataset.id || messageId, emoji);
                 container.style.display = 'none';
             }
         });
@@ -2084,6 +2111,11 @@ function isNearBottom(threshold = 150) {
     return chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < threshold;
 }
 
+// Hide the "new message below" pill whenever the user scrolls back to the bottom
+chatDiv.addEventListener('scroll', () => {
+    if (isNearBottom()) hideNewMessageBelowPill();
+}, { passive: true });
+
 
 
 
@@ -2147,8 +2179,156 @@ function isNearBottom(threshold = 150) {
 })();
 
 
+/* ============================================================
+   LOCAL ENCRYPTED CONTENT FILTER
+   ============================================================ */
+(function () {
+    'use strict';
 
+    // ------------------------------------------------------------
+    // 1. LOCKED BASE LIST (Scrambled)
+    // These words are compiled into the code and CANNOT be removed by the user.
+    // ------------------------------------------------------------
+    const SECRET_KEY = "ChatifySecret2026";
+    
+    // Scrambled string: "badword1,badword2,curseword"
+    const SCRAMBLED_BASE_LIST = "FxIfFBEQDxQSAQweGhwWHQ8OGh8UGh0BDxQSAQ8UGh0B"; 
+    
+    const defaultCensorList = [];
+    let userCensorList = [];
 
+    // --- Crypto Helpers ---
+    function xorCrypt(str, key) {
+        let result = '';
+        for (let i = 0; i < str.length; i++) {
+            result += String.fromCharCode(str.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+        }
+        return result;
+    }
+    function encryptText(text) {
+        try { return btoa(xorCrypt(text, SECRET_KEY)); } catch(e) { return ""; }
+    }
+    function decryptText(base64) {
+        try { return xorCrypt(atob(base64), SECRET_KEY); } catch(e) { return ""; }
+    }
+
+    // --- Decode the locked base list at runtime ---
+    try {
+        const decryptedBase = decryptText(SCRAMBLED_BASE_LIST);
+        if (decryptedBase) {
+            defaultCensorList.push(...decryptedBase.split(',').map(w => w.trim()).filter(w => w));
+        }
+    } catch (e) {
+        console.warn("Failed to decode base filter list");
+    }
+
+    // --- DOM Elements ---
+    const filterBtn = document.getElementById('filterBtn');
+    const filterModal = document.getElementById('filterModal');
+    const bannedWordsInput = document.getElementById('bannedWordsInput');
+    const cancelFilterBtn = document.getElementById('cancelFilterBtn');
+    const saveFilterBtn = document.getElementById('saveFilterBtn');
+    const filterActiveMsg = document.getElementById('filterActiveMsg');
+
+    // --- Load/Save User Lists ---
+    function loadUserList() {
+        userCensorList = [];
+        const saved = localStorage.getItem('chatify_user_censor');
+        if (saved) {
+            const decrypted = decryptText(saved);
+            if (decrypted) {
+                userCensorList = decrypted.split(',').map(w => w.trim()).filter(w => w);
+            }
+        }
+    }
+
+    function saveUserList() {
+        const encrypted = encryptText(userCensorList.join(','));
+        localStorage.setItem('chatify_user_censor', encrypted);
+    }
+
+    // --- Core Filtering Function ---
+    window.filterMessageText = function(text) {
+        if (!text) return text;
+        let filtered = text;
+        const allWords = [...defaultCensorList, ...userCensorList];
+        
+        allWords.forEach(word => {
+            if (!word) return;
+            // Escape special regex characters to prevent crashes
+            const safeWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            
+            try {
+                // \b ensures it matches whole words only
+                const regex = new RegExp(`\\b${safeWord}\\b`, 'gi');
+                filtered = filtered.replace(regex, (match) => '*'.repeat(match.length));
+            } catch(e) {
+                console.warn("Filter regex error on word:", word);
+            }
+        });
+        return filtered;
+    };
+
+    // --- UI Logic ---
+    function updateUIMsg() {
+        filterActiveMsg.innerHTML = `✅ Default words: ${defaultCensorList.length} (Locked)<br>✅ Your words: ${userCensorList.length}`;
+    }
+
+    filterBtn.addEventListener('click', () => {
+        bannedWordsInput.value = userCensorList.join(', ');
+        updateUIMsg();
+        filterModal.style.display = 'flex';
+    });
+
+    cancelFilterBtn.addEventListener('click', () => {
+        filterModal.style.display = 'none';
+    });
+
+    filterModal.addEventListener('click', (e) => {
+        if (e.target === filterModal) filterModal.style.display = 'none';
+    });
+
+    saveFilterBtn.addEventListener('click', () => {
+        const rawWords = bannedWordsInput.value.split(',').map(w => w.trim()).filter(w => w);
+        
+        // Filter out any words the user tries to add that are already in the default list
+        userCensorList = rawWords.filter(w => !defaultCensorList.includes(w));
+        
+        saveUserList();
+        updateUIMsg();
+        
+        // Re-render chat to apply immediately
+        if (typeof renderAll === 'function') renderAll(false);
+        filterModal.style.display = 'none';
+    });
+
+    // --- Custom Console Function for Adding Locked Words ---
+    window.censorAddWord = function(word) {
+        if (!word || typeof word !== 'string') return "Please provide a valid word string.";
+        const cleanWord = word.trim().toLowerCase();
+        
+        // Add to default list for this session
+        if (!defaultCensorList.includes(cleanWord)) {
+            defaultCensorList.push(cleanWord);
+            
+            // Generate the new scrambled string
+            const newScrambledList = encryptText(defaultCensorList.join(','));
+            
+            console.log(`%c✅ Added "${cleanWord}" to the locked base list for this session.`, 'color: lime; font-weight: bold; font-size: 14px;');
+            console.log(`%c👉 To make it permanent, copy the string below and replace SCRAMBLED_BASE_LIST in your HTML:`, 'color: orange; font-size: 12px;');
+            console.log(`%c"${newScrambledList}"`, 'background: #222; color: #bada55; padding: 8px; font-family: monospace; font-size: 13px; border-radius: 4px;');
+            
+            if (typeof renderAll === 'function') renderAll(false);
+        } else {
+            console.log(`"${cleanWord}" is already in the locked list.`);
+        }
+    };
+
+    // Initialize
+    loadUserList();
+    console.log('🛡️ Content Filter Active. Type censorAddWord("word") in this console to add locked words.');
+
+})();
 </script>
 
 </body>
