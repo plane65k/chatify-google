@@ -2077,6 +2077,68 @@ function hideNewMessageBelowPill() {
 function isNearBottom(threshold = 150) {
     return chatDiv.scrollHeight - chatDiv.scrollTop - chatDiv.clientHeight < threshold;
 }
+
+
+
+
+
+/* ============================================================
+   INACTIVITY REFRESH PROMPT
+   After N minutes of no user interaction, show a banner.
+   Clicking the banner reloads the page.
+   ============================================================ */
+(function () {
+  'use strict';
+
+  const INACTIVITY_MS = 6 * 60 * 1000; // 5 minutes
+  let inactivityTimer = null;
+  let bannerShown = false;
+
+  function showRefreshBanner() {
+    if (bannerShown) return;
+    bannerShown = true;
+
+    // Reuse the notify-banner element if present; otherwise create one.
+    let banner = document.getElementById('notifyBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'notifyBanner';
+      banner.className = 'notify-banner';
+      document.body.appendChild(banner);
+    }
+
+    banner.textContent = '🔄 Chat has been inactive — click to refresh';
+    banner.style.display = 'block';
+    banner.style.cursor = 'pointer';
+    banner.style.pointerEvents = 'auto';
+    banner.style.zIndex = '10001';
+
+    // One-shot click → reload
+    const onClick = () => {
+      banner.removeEventListener('click', onClick);
+      window.location.reload();
+    };
+    banner.addEventListener('click', onClick);
+  }
+
+  function resetInactivityTimer() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    // If banner already showed, don't hide it — user has to click.
+    if (bannerShown) return;
+    inactivityTimer = setTimeout(showRefreshBanner, INACTIVITY_MS);
+  }
+
+  // Reset the timer on any real user activity
+  ['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel', 'scroll']
+    .forEach(evt => document.addEventListener(evt, resetInactivityTimer, { passive: true }));
+
+  // Start the timer once the page is interactive
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    resetInactivityTimer();
+  } else {
+    document.addEventListener('DOMContentLoaded', resetInactivityTimer);
+  }
+})();
 </script>
 
 </body>
