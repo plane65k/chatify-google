@@ -173,9 +173,15 @@
         .button-clear {background:none;border:none;color:var(--button-text);cursor:pointer;font-weight:600}
 
         #chat {
-    flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;
-    gap:12px;background:transparent;
-    height:calc(100vh - 140px);overflow-y:auto;margin-top:80px;
+    flex: 1;
+    overflow-y: auto;
+    padding: 78px 18px 18px 18px;   /* top padding makes room for the pill */
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: transparent;
+    height: calc(100vh - 78px);      /* only reserved for footer, not header */
+    box-sizing: border-box;
 }
         .message {
             max-width:72%;padding:12px 14px;border-radius:20px;font-size:14px;
@@ -2139,6 +2145,10 @@ function isNearBottom(threshold = 150) {
     document.addEventListener('DOMContentLoaded', resetInactivityTimer);
   }
 })();
+
+
+
+
 </script>
 
 </body>
