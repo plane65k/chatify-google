@@ -845,14 +845,19 @@ async function fetchReactionsForMessages() {
 
     const avatarUrl = msg.avatarUrl || MY_AVATAR;
 
-    let contentHtml = '';
+        let contentHtml = '';
     if (msg.attachment) {
         const attName = (msg.attachment.attachmentDataRef && msg.attachment.attachmentDataRef.resourceName) || msg.attachment.name;
         const cid = 'att-' + msg.id.replace(/[^a-z0-9]/gi, '');
-        contentHtml = `<img id="${cid}" class="message-image" alt="attachment" loading="lazy" />`;
+        // If the message ALSO has text, render the text above the image.
+        let textPart = '';
+        if (msg.message && msg.message.trim()) {
+            textPart = `<div style="line-height:1.35;margin:0 0 6px 0;">${escapeHtml(window.filterMessageText ? window.filterMessageText(msg.message) : msg.message)}</div>`;
+        }
+        contentHtml = textPart + `<img id="${cid}" class="message-image" alt="attachment" loading="lazy" />`;
         setTimeout(async () => {
             try {
-                                const r = await fetch(WORKER_URL + '/attachment?space=' + encodeURIComponent(SPACE_ID) + '&resource=' + encodeURIComponent(attName) + '&email=' + encodeURIComponent(USER_EMAIL), {
+                const r = await fetch(WORKER_URL + '/attachment?space=' + encodeURIComponent(SPACE_ID) + '&resource=' + encodeURIComponent(attName) + '&email=' + encodeURIComponent(USER_EMAIL), {
                     headers: { 'Authorization': 'Bearer ' + SESSION_TOKEN }
                 });
                 if (!r.ok) return;
@@ -863,7 +868,11 @@ async function fetchReactionsForMessages() {
             } catch (e) { /* silent */ }
         }, 0);
     } else if (msg.gifUrl) {
-        contentHtml = `<img src="${escapeHtml(msg.gifUrl)}" class="message-image" loading="lazy" alt="gif" />`;
+        let textPart = '';
+        if (msg.message && msg.message.trim() && msg.message.trim() !== msg.gifUrl) {
+            textPart = `<div style="line-height:1.35;margin:0 0 6px 0;">${escapeHtml(window.filterMessageText ? window.filterMessageText(msg.message) : msg.message)}</div>`;
+        }
+        contentHtml = textPart + `<img src="${escapeHtml(msg.gifUrl)}" class="message-image" loading="lazy" alt="gif" />`;
     } else if (msg.message && msg.message.match(/^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
         contentHtml = `<img src="${escapeHtml(msg.message)}" class="message-image" />`;
     } else if (msg.message && msg.message.match(/^https?:\/\//i)) {
@@ -1012,10 +1021,15 @@ if (window.filterMessageText) {
         let realMsg = null;
 
         try {
-            const payload = { space: SPACE_ID, text: text };
-            if (quoted) {
+                        const payload = { space: SPACE_ID, text: text };
+            if (quoted && quoted.msgId) {
                 payload.quotedMessageName = quoted.msgId;
-                payload.quotedLastUpdateTime = quoted.lastUpdateTime;
+                // Only include lastUpdateTime if it's a real ISO string — otherwise
+                // Google rejects the whole message with 400 Bad Request.
+                if (typeof quoted.lastUpdateTime === 'string' && quoted.lastUpdateTime.length > 0 &&
+                    !isNaN(Date.parse(quoted.lastUpdateTime))) {
+                    payload.quotedLastUpdateTime = quoted.lastUpdateTime;
+                }
             }
 
             // ─── CONFIRMATION #1: Server accepted the POST ───
@@ -1027,8 +1041,11 @@ if (window.filterMessageText) {
                 },
                 body: JSON.stringify(payload)
             });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || data.error) throw new Error(errorToString(data.error) || `HTTP ${res.status}`);
+                        const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) {
+                const detail = data.error || data.message || JSON.stringify(data);
+                throw new Error(`${res.status}: ${detail}`);
+            }
             if (!data.message || !data.message.name) throw new Error('Server did not return message ID');
 
             realMsg = normalizeMessage(data.message);
