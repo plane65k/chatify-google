@@ -334,7 +334,40 @@
         }
         .myMessage .quoted-block {background:rgba(0,0,0,0.12);color:var(--message-my-text)}
         .quoted-block .quoted-author {font-weight:700;margin-right:4px}
-
+        /* ---------- Message status bar (ghost send progress) ---------- */
+        .msg-status-bar {
+            margin-top:6px;
+            height:6px;
+            width:100%;
+            background:rgba(0,0,0,0.15);
+            border-radius:999px;
+            overflow:hidden;
+            display:flex;
+            gap:1px;
+        }
+        .myMessage .msg-status-bar { background:rgba(0,0,0,0.2); }
+        .msg-status-seg {
+            flex:1;
+            background:#9e9e9e;
+            height:100%;
+            position:relative;
+            transition:background-color 0.25s ease;
+        }
+        .msg-status-seg.done {
+            background:#00e676;
+        }
+        .msg-status-seg.fail {
+            background:#e53935;
+        }
+        /* progress fill layer inside the segments */
+        .msg-status-fill {
+            position:absolute;
+            inset:0 auto 0 0;
+            width:0%;
+            background:linear-gradient(90deg,#43a047,#7cffa0);
+            transition:width 0.4s cubic-bezier(0.4,0,0.2,1);
+        }
+        .msg-status-seg.done .msg-status-fill { width:100% !important; }
         /* ---------- Image message ---------- */
         .message-image {max-width:260px;border-radius:8px;display:block}
 
@@ -967,11 +1000,11 @@ if (window.filterMessageText) {
 
         messages.push(optimistic);
         renderOneMessage(optimistic, true);
-
         let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
         if (tempEl) {
             tempEl.style.opacity = '0.55';
             tempEl.style.animation = 'ghostPulse 1.4s ease-in-out infinite';
+            attachStatusBar(tempEl);
         }
 
         chatDiv.scrollTop = chatDiv.scrollHeight;
@@ -1012,13 +1045,13 @@ if (window.filterMessageText) {
             displayed.delete(tempId);
             messages.push(realMsg);
             displayed.add(realMsg.id);
-        } catch (e) {
+                } catch (e) {
             showNotifyBanner('Send failed: ' + errorToString(e));
             if (tempEl) {
+                failSeg(tempEl, 0);
                 tempEl.style.animation = 'none';
-                tempEl.style.background = '#d32f2f';
                 tempEl.style.opacity = '1';
-                setTimeout(() => tempEl.remove(), 2000);
+                // Keep ghost visible so user sees the failed message; don't auto-remove
             }
             messages = messages.filter(m => m.id !== tempId);
             displayed.delete(tempId);
@@ -1083,12 +1116,69 @@ if (window.filterMessageText) {
     // Adaptive verification: each tick surfaces any other-user messages
     // (inserted chronologically, may appear above the ghost), THEN checks
     // whether our own message has been confirmed. Unghost on confirm.
-       function verifyAndUnghost(realId, tempEl, attempt) {
+        // Attach a 3-segment status bar under the message bubble.
+    // Segment 1 = server accepted POST (done immediately on entry).
+    // Segment 2 = Google GET confirms message exists (verifyAndUnghost confirm).
+    // Segment 3 = stability window passed (400ms after confirm).
+    function attachStatusBar(el) {
+        if (!el) return null;
+        const existing = el.querySelector('.msg-status-bar');
+        if (existing) return existing;
+        const bar = document.createElement('div');
+        bar.className = 'msg-status-bar';
+        for (let i = 0; i < 3; i++) {
+            const seg = document.createElement('div');
+            seg.className = 'msg-status-seg';
+            seg.dataset.stage = String(i);
+            const fill = document.createElement('div');
+            fill.className = 'msg-status-fill';
+            seg.appendChild(fill);
+            bar.appendChild(seg);
+        }
+        // Place after timestamp
+        const ts = el.querySelector('.timestamp');
+        if (ts) ts.insertAdjacentElement('afterend', bar);
+        else el.appendChild(bar);
+        return bar;
+    }
+
+    function setSegProgress(el, stage, percent) {
+        const bar = el && el.querySelector('.msg-status-bar');
+        if (!bar) return;
+        const seg = bar.querySelector(`.msg-status-seg[data-stage="${stage}"]`);
+        if (!seg) return;
+        const fill = seg.querySelector('.msg-status-fill');
+        if (!fill) return;
+        const p = Math.max(0, Math.min(100, percent));
+        fill.style.width = p + '%';
+        if (p >= 100) seg.classList.add('done');
+    }
+    function failSeg(el, stage) {
+        const bar = el && el.querySelector('.msg-status-bar');
+        if (!bar) return;
+        const seg = bar.querySelector(`.msg-status-seg[data-stage="${stage}"]`);
+        if (seg) seg.classList.add('fail');
+    }
+
+    // Adaptive verification: retries every ~250ms until confirmed (max 8 tries ≈ 2s).
+    // Ghost persists until confirmed; message never disappears mid-flight.
+    function verifyAndUnghost(realId, tempEl, attempt) {
         pendingConfirms++;
+        if (tempEl) {
+            attachStatusBar(tempEl);
+            // Stage 0 (POST) already returned success by the time we get here
+            setSegProgress(tempEl, 0, 100);
+        }
         setTimeout(async () => {
             let raw = null;
             try { raw = await fetchMessages(); } catch (e) { raw = null; }
             pendingConfirms--;
+
+            // Animate stage 1 fill proportional to attempt (maxes at 90% until confirmed)
+            if (tempEl) {
+                const pct = Math.min(90, Math.round(((attempt + 1) / 8) * 100));
+                setSegProgress(tempEl, 1, pct);
+            }
 
             if (Array.isArray(raw)) {
                 const list = raw.slice().reverse().map(normalizeMessage);
@@ -1118,16 +1208,47 @@ if (window.filterMessageText) {
                 // ── Priority 2: check for our own message ──
                 const confirmed = raw.some(m => m.name === realId);
                 if (confirmed) {
-                    if (tempEl) { tempEl.style.opacity = '1'; tempEl.style.animation = 'none'; }
-                    // Cooldown: keep isSendingMessage locked for a short stabilisation
-                    // window so a second send can't race the next poll's render.
-                    setTimeout(() => { isSendingMessage = false; }, 400);
+                    if (tempEl) {
+                        setSegProgress(tempEl, 1, 100);
+                        // Stage 3 stability window
+                        setTimeout(() => {
+                            setSegProgress(tempEl, 2, 100);
+                            // Unghost AFTER the bar completes
+                            setTimeout(() => {
+                                if (tempEl) {
+                                    tempEl.style.opacity = '1';
+                                    tempEl.style.animation = 'none';
+                                    // Fade the status bar out after completion
+                                                                        const bar = tempEl.querySelector('.msg-status-bar');
+                                    if (bar) {
+                                        bar.style.transition = 'opacity 0.6s ease, height 0.3s ease 0.6s, margin 0.3s ease 0.6s';
+                                        bar.style.opacity = '0';
+                                        bar.style.overflow = 'hidden';
+                                        setTimeout(() => {
+                                            bar.style.height = '0';
+                                            bar.style.marginTop = '0';
+                                        }, 620);
+                                    }
+                                }
+                                isSendingMessage = false;
+                            }, 450);
+                        }, 400);
+                    } else {
+                        isSendingMessage = false;
+                    }
                     return;
                 }
             }
 
             if (attempt >= 7) {
-                failMessage(realId, 'Message not confirmed by Google after retries');
+                // Fail: mark all unfinished segments red, ghost STAYS visible, just stops pulsing
+                if (tempEl) {
+                    failSeg(tempEl, 1);
+                    failSeg(tempEl, 2);
+                    tempEl.style.animation = 'none';
+                    tempEl.style.opacity = '1';
+                }
+                showNotifyBanner('Message not confirmed by Google after retries');
                 isSendingMessage = false;
                 return;
             }
@@ -1239,10 +1360,12 @@ async function sendGif(gifUrl, caption = '') {
     messages.push(optimistic);
     renderOneMessage(optimistic, true);
 
-    let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
+       let tempEl = chatDiv.querySelector(`.message[data-id="${tempId}"]`);
     if (tempEl) {
         tempEl.style.opacity = '0.55';
         tempEl.style.animation = 'ghostPulse 1.4s ease-in-out infinite';
+        attachStatusBar(tempEl);
+        setSegProgress(tempEl, 0, 100); // stage 0 = POST accepted (filled after success below)
     }
 
     chatDiv.scrollTop = chatDiv.scrollHeight;
@@ -1271,10 +1394,9 @@ async function sendGif(gifUrl, caption = '') {
 
         realMsg = normalizeMessage(data.message);
 
-        // Solidify the ghost in place — no re-render, no flicker
+                // Solidify the ghost in place — no re-render, no flicker.
+        // NOTE: keep it ghosted (do NOT set opacity:1 here) until stage 3 completes.
         if (tempEl) {
-            tempEl.style.opacity = '1';
-            tempEl.style.animation = 'none';
             tempEl.dataset.id = realMsg.id;
             if (realMsg.username) {
                 const nameEl = tempEl.querySelector('strong');
@@ -1287,14 +1409,13 @@ async function sendGif(gifUrl, caption = '') {
         messages.push(realMsg);
         displayed.add(realMsg.id);
 
-    } catch (e) {
-        // Confirmation #1 failed → fail loudly
+       } catch (e) {
+        // Confirmation #1 failed → fail loudly, keep ghost visible
         showNotifyBanner('GIF send failed: ' + errorToString(e));
         if (tempEl) {
+            failSeg(tempEl, 0);
             tempEl.style.animation = 'none';
-            tempEl.style.background = '#d32f2f';
             tempEl.style.opacity = '1';
-            setTimeout(() => tempEl.remove(), 2000);
         }
         messages = messages.filter(m => m.id !== tempId);
         displayed.delete(tempId);
@@ -1303,23 +1424,46 @@ async function sendGif(gifUrl, caption = '') {
     }
 
     // ─── CONFIRMATION #2: Immediate GET verification (1s later) ───
-    setTimeout(async () => {
+        setTimeout(async () => {
         try {
             const raw = await fetchMessages();
             const found = raw.some(m => m.name === realMsg.id);
-            if (!found) {
-                failMessage(realMsg.id, 'GIF not found in Google Chat (check 2)');
+            if (!found && tempEl) {
+                failSeg(tempEl, 1);
+                showNotifyBanner('GIF not confirmed in Google Chat');
+            } else if (tempEl) {
+                setSegProgress(tempEl, 1, 100);
             }
         } catch (e) { /* transient network — don't fail on network error */ }
     }, 1000);
 
     // ─── CONFIRMATION #3: Delayed stability check (4s later) ───
-    setTimeout(async () => {
+        setTimeout(async () => {
         try {
             const raw = await fetchMessages();
             const found = raw.find(m => m.name === realMsg.id);
-            if (!found) {
-                failMessage(realMsg.id, 'GIF disappeared from Google Chat (check 3)');
+            if (!found && tempEl) {
+                failSeg(tempEl, 2);
+                showNotifyBanner('GIF disappeared from Google Chat');
+            } else if (tempEl) {
+                setSegProgress(tempEl, 2, 100);
+                // Smoothly unghost + hide bar
+                setTimeout(() => {
+                    if (tempEl) {
+                        tempEl.style.opacity = '1';
+                        tempEl.style.animation = 'none';
+                                                const bar = tempEl.querySelector('.msg-status-bar');
+                        if (bar) {
+                            bar.style.transition = 'opacity 0.6s ease, height 0.3s ease 0.6s, margin 0.3s ease 0.6s';
+                            bar.style.opacity = '0';
+                            bar.style.overflow = 'hidden';
+                            setTimeout(() => {
+                                bar.style.height = '0';
+                                bar.style.marginTop = '0';
+                            }, 620);
+                        }
+                    }
+                }, 300);
             }
         } catch (e) { /* transient network — don't fail on network error */ }
     }, 4000);
@@ -1499,7 +1643,7 @@ async function sendGif(gifUrl, caption = '') {
     stopPolling();
     pollTimer = setInterval(async () => {
         if (isPolling) return;
-        if (isSendingMessage || pendingConfirms > 0) return;
+                if (pendingConfirms > 0) return;
         isPolling = true;
         try {
             const raw = await fetchMessages();
@@ -1533,9 +1677,14 @@ async function sendGif(gifUrl, caption = '') {
 
                 const shouldFollow = wasNearBottom || brandNew.some(m => m.isMine);
 
-                if (!somethingRemoved && !orderChanged && brandNew.length > 0) {
+                                if (!somethingRemoved && !orderChanged && brandNew.length > 0) {
                     // ─── Incremental append: never touches existing DOM ───
+                    const ghosts = messages.filter(m =>
+                        !listIdSet.has(m.id) &&
+                        chatDiv.querySelector('.message[data-id="' + CSS.escape(m.id) + '"] .msg-status-bar')
+                    );
                     messages = list;
+                    for (const g of ghosts) messages.push(g);
                     for (const m of brandNew) {
                         renderOneMessage(m, true);
                     }
@@ -1544,9 +1693,14 @@ async function sendGif(gifUrl, caption = '') {
                         hideNewMessageBelowPill();
                         if (document.visibilityState === 'visible') updateTitleUnread(false);
                     }
-                } else if (!somethingRemoved && orderChanged) {
+                                } else if (!somethingRemoved && orderChanged) {
                     // ─── Order changed: move existing DOM nodes, don't rebuild ───
+                    const ghosts = messages.filter(m =>
+                        !listIdSet.has(m.id) &&
+                        chatDiv.querySelector('.message[data-id="' + CSS.escape(m.id) + '"] .msg-status-bar')
+                    );
                     messages = list;
+                    for (const g of ghosts) messages.push(g);
                     const orderedEls = list
                         .map(m => chatDiv.querySelector('.message[data-id="' + CSS.escape(m.id) + '"]'))
                         .filter(Boolean);
@@ -1556,17 +1710,26 @@ async function sendGif(gifUrl, caption = '') {
                         hideNewMessageBelowPill();
                         if (document.visibilityState === 'visible') updateTitleUnread(false);
                     }
-                } else if (somethingRemoved) {
+                               } else if (somethingRemoved) {
                     // ─── Deletion: only remove the specific nodes ───
+                    // But NEVER remove a ghost (send in flight) — verifyAndUnghost settles it.
                     const keptIds = new Set(list.map(m => m.id));
                     for (const oldId of oldIdSet) {
                         if (!keptIds.has(oldId)) {
                             const el = chatDiv.querySelector('.message[data-id="' + CSS.escape(oldId) + '"]');
+                            // Preserve ghosts that still have an active status bar
+                            if (el && el.querySelector('.msg-status-bar') && el.style.opacity !== '1') continue;
                             if (el) el.remove();
                             displayed.delete(oldId);
                         }
                     }
+                    // Preserve any local ghost not yet returned by Google
+                    const ghosts = messages.filter(m =>
+                        !listIdSet.has(m.id) &&
+                        chatDiv.querySelector('.message[data-id="' + CSS.escape(m.id) + '"] .msg-status-bar')
+                    );
                     messages = list;
+                    for (const g of ghosts) messages.push(g);
                     // Append any brand-new that appeared alongside the deletion
                     for (const m of brandNew) {
                         if (!displayed.has(m.id)) renderOneMessage(m, true);
@@ -2192,7 +2355,7 @@ chatDiv.addEventListener('scroll', () => {
     const SECRET_KEY = "ChatifySecret2026";
     
     // Scrambled string: "badword1,badword2,curseword"
-    const SCRAMBLED_BASE_LIST = "FxIfFBEQDxQSAQweGhwWHQ8OGh8UGh0BDxQSAQ8UGh0BGi0BBhMMFA=="; 
+    const SCRAMBLED_BASE_LIST = "FxIfFBEQDxQSAQweGhwWHQ8OGh8UGh0BDxQSAQ8UGh0BGi0BBhMMFFU9DAQVBA=="; 
     
     const defaultCensorList = [];
     let userCensorList = [];
