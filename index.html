@@ -379,6 +379,95 @@
             animation:spin 3s linear infinite;height:180px;
         }
         @keyframes spin {to{transform:rotate(360deg)}}
+    /* ---------- Persistent Eye Lock ---------- */
+/* ---------- Persistent Eye Lock ---------- */
+#eyeLockBtn { background: none; border: none; color: var(--button-text); cursor: pointer; font-weight: 600; }
+#eyeLockOverlay {
+    position: fixed; inset: 0; z-index: 20000; display: none;
+    background: #000; color: #fff; flex-direction: column;
+    align-items: center; justify-content: flex-start; padding-top: 40px;
+    font-family: Roboto, system-ui, sans-serif;
+}
+#eyeLockOverlay.active { display: flex; }
+#eyeLockIcon { display: none; }
+#eyeLockStatus { display: none; }
+#eyeLockTitle {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    font-size: 22px; font-weight: 600; letter-spacing: 0.5px;
+    opacity: 0.85; margin: 0; text-align: center;
+}
+#eyeLockAnim { margin-top: 0; width: 50px; height: 50px; display: none; }
+#eyeLockAnim.show { display: block; animation: faceIdPop 0.4s cubic-bezier(0.22,1,0.36,1); }
+#eyeLockAnim img { width: 100%; height: 100%; object-fit: contain; transform: scale(1.2); }
+@keyframes faceIdPop { 0% { transform: scale(0.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+/* Setup screen */
+#faceSetupOverlay {
+    position: fixed; inset: 0; z-index: 20001; display: none;
+    background: #000; color: #fff; flex-direction: column;
+    align-items: center; justify-content: center; padding: 30px 20px;
+    font-family: Roboto, system-ui, sans-serif; text-align: center;
+}
+#faceSetupOverlay.active { display: flex; }
+#faceSetupTitle { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+#faceSetupDesc { font-size: 13px; opacity: 0.7; max-width: 380px; margin: 0 0 20px; line-height: 1.5; }
+#faceSetupVideoWrap {
+    position: relative; width: min(320px, 80vw); aspect-ratio: 4/3;
+    border-radius: 18px; overflow: hidden; border: 3px solid #4caf50; background: #111;
+}
+#faceSetupVideo { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+#faceSetupBtn {
+    margin-top: 22px; padding: 12px 26px; border-radius: 30px; border: none;
+    background: #4caf50; color: #fff; font-weight: 700; font-size: 15px;
+    cursor: pointer; letter-spacing: 0.3px;
+}
+#faceSetupBtn:disabled { opacity: 0.6; cursor: wait; }
+#faceResetBtn {
+    margin-top: 12px; padding: 8px 18px; border-radius: 22px;
+    border: 1px solid #555; background: transparent; color: #fff;
+    font-size: 12px; cursor: pointer;
+}
+#faceResetBtn:hover { background: rgba(255,255,255,0.08); }
+#faceSetupStatus { margin-top: 14px; font-size: 12px; opacity: 0.7; }
+
+/* Hidden video used for scanning */
+#eyeLockVideo { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; top: -9999px; }
+    
+
+
+/* PIN input inside setup screen */
+#faceSetupPinWrap { margin-top: 14px; display: block; }
+#faceSetupPinInput {
+    padding: 10px 16px; border-radius: 22px; border: 1px solid #555;
+    background: #111; color: #fff; font-size: 16px; letter-spacing: 4px;
+    text-align: center; width: 160px; outline: none;
+}
+#faceSetupPinInput:focus { border-color: #4caf50; }
+#faceSetupPinHint { font-size: 11px; opacity: 0.6; margin-top: 6px; }
+
+/* Reset choice modal */
+#faceResetChoice {
+    position: fixed; inset: 0; z-index: 20002; display: none;
+    background: rgba(0,0,0,0.75); align-items: center; justify-content: center;
+    padding: 20px; font-family: Roboto, system-ui, sans-serif;
+}
+#faceResetChoice.active { display: flex; }
+#faceResetChoiceBox {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 20px;
+    padding: 24px; max-width: 340px; width: 100%; text-align: center;
+    color: #fff;
+}
+#faceResetChoiceBox h3 { margin: 0 0 6px; font-size: 17px; }
+#faceResetChoiceBox p { font-size: 12px; opacity: 0.65; margin: 0 0 18px; line-height: 1.5; }
+#faceResetChoiceBox button {
+    display: block; width: 100%; margin: 8px 0; padding: 11px;
+    border-radius: 24px; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none;
+}
+#resetFaceBtn    { background: #4caf50; color: #fff; }
+#resetPinBtn     { background: transparent; color: #fff; border: 1px solid #555 !important; }
+#resetBothBtn    { background: #e53935; color: #fff; }
+#faceResetCancel { background: transparent; color: #aaa; border: none !important; font-weight: 500 !important; }
     </style>
 </head>
 <body>
@@ -501,6 +590,52 @@
         </div>
     </div>
 </div>
+<!-- Persistent Eye Lock Overlay -->
+<div id="eyeLockOverlay">
+    <div id="eyeLockIcon">🔒</div>
+    <div id="eyeLockTitle">Eye Lock Active</div>
+    <div id="eyeLockStatus">Align your eyes to the camera to unlock.</div>
+    <div id="eyeLockAnim">
+        <img id="eyeLockAnimImg" alt="scanning" />
+    </div>
+<div id="eyeLockPinWrap" style="position:absolute;bottom:40px;left:50%;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;gap:8px;width:min(260px,80vw);">
+<input id="eyeLockPinInput" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" style="padding:10px 16px;border-radius:22px;border:1px solid #555;background:#111;color:#fff;font-size:18px;letter-spacing:6px;text-align:center;width:100%;outline:none;" />
+<button id="eyeLockPinBtn" style="padding:8px 20px;border-radius:22px;border:1px solid #555;background:transparent;color:#bbb;font-weight:500;font-size:12px;cursor:pointer;letter-spacing:0.4px;">Unlock with PIN</button>
+        <div id="eyeLockPinError" style="font-size:11px;color:#ff8a80;min-height:14px;"></div>
+    </div>
+</div>
+
+
+
+
+<!-- Face ID Setup Screen -->
+<div id="faceSetupOverlay">
+    <h2 id="faceSetupTitle">Set Up Face ID</h2>
+    <p id="faceSetupDesc">Look straight at the camera and tap the button below to enroll your face. This is stored only on this device.</p>
+    <div id="faceSetupVideoWrap">
+        <video id="faceSetupVideo" autoplay muted playsinline></video>
+    </div>
+    <button id="faceSetupBtn">Capture Face ID</button>
+    <div id="faceSetupPinWrap">
+        <input id="faceSetupPinInput" type="password" inputmode="numeric" maxlength="8" placeholder="4–8 digits" />
+        <div id="faceSetupPinHint">Required backup PIN (4–8 digits)</div>
+    </div>
+    <button id="faceResetBtn">Reset Face ID / PIN</button>
+    <div id="faceSetupStatus"></div>
+</div>
+
+<!-- Reset Choice Modal -->
+<div id="faceResetChoice">
+    <div id="faceResetChoiceBox">
+        <h3>Reset Options</h3>
+        <p>Choose what to reset. Your PIN and Face ID are stored separately.</p>
+        <button id="resetFaceBtn">Reset Face ID only</button>
+        <button id="resetPinBtn">Reset PIN only</button>
+        <button id="resetBothBtn">Reset both</button>
+        <button id="faceResetCancel">Cancel</button>
+    </div>
+</div>
+<video id="eyeLockVideo" autoplay muted playsinline></video>
 
 <!-- Notify banner -->
 <div id="notifyBanner" class="notify-banner"></div>
@@ -1837,9 +1972,9 @@ async function sendGif(gifUrl, caption = '') {
     stopPolling();
     SESSION_TOKEN = '';
     localStorage.removeItem('cg_token'); // <-- Clears the persistent token
-    chatApp.style.display = 'none';
-    pinOverlay.style.display = 'flex';
-    messages = []; displayed.clear(); chatDiv.innerHTML = '';
+    // Turn off eye lock (stops camera + scan loop) and reload the page
+    try { if (typeof window.__eyeLockDisable === 'function') window.__eyeLockDisable(); } catch(e) {}
+    location.reload();
 });
 
     /* ============================================================
@@ -2509,7 +2644,400 @@ chatDiv.addEventListener('scroll', () => {
     console.log('🛡️ Content Filter Active. Type censorAddWord("word") in this console to add locked words.');
 
 })();
+
+
+/* ============================================================
+   PERSISTENT EYE LOCK — Real-ish Face ID + Backup PIN
+   ============================================================ */
+(function initEyeLock() {
+    const overlay    = document.getElementById('eyeLockOverlay');
+    const animWrap   = document.getElementById('eyeLockAnim');
+    const animImg    = document.getElementById('eyeLockAnimImg');
+    const hiddenVid  = document.getElementById('eyeLockVideo');
+const lockPinWrap  = document.getElementById('eyeLockPinWrap');
+const lockPinInput = document.getElementById('eyeLockPinInput');
+const lockPinBtn   = document.getElementById('eyeLockPinBtn');
+const lockPinError = document.getElementById('eyeLockPinError');
+    const setupOverlay  = document.getElementById('faceSetupOverlay');
+    const setupVideo    = document.getElementById('faceSetupVideo');
+    const setupBtn      = document.getElementById('faceSetupBtn');
+    const resetBtn      = document.getElementById('faceResetBtn');
+    const setupStatus   = document.getElementById('faceSetupStatus');
+    const pinWrap       = document.getElementById('faceSetupPinWrap');
+    const pinInput      = document.getElementById('faceSetupPinInput');
+
+    const resetChoice     = document.getElementById('faceResetChoice');
+    const resetFaceBtn    = document.getElementById('resetFaceBtn');
+    const resetPinBtn     = document.getElementById('resetPinBtn');
+    const resetBothBtn    = document.getElementById('resetBothBtn');
+    const resetCancelBtn  = document.getElementById('faceResetCancel');
+
+    const SCAN_IMG    = 'https://res.cloudinary.com/dceqg5cky/image/upload/v1792976629/output-onlinepngtools_ccsiv8.png';
+    const SUCCESS_GIF = 'https://res.cloudinary.com/dceqg5cky/image/upload/v1792976703/output-onlinegiftools-ezgif.com-crop_1_lqligt.gif';
+    const MODEL_URL   = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+    const FACE_KEY    = 'chatify_face_descriptor';
+    const PIN_KEY     = 'chatify_face_pin';
+    const MATCH_THRESHOLD = 0.6;
+
+    let enabled = false;
+    let stream = null;
+    let loopId = null;
+    let modelsLoaded = false;
+    let faceApiReady = false;
+    let holdStart = 0;
+    let locked = false;
+    let unlocking = false;
+    let storedDescriptor = null;
+    let storedPin = null;
+    let setupStream = null;
+    let disabledByPin = false;
+
+    // ---------- Load face-api.js ----------
+    function loadFaceApiScript() {
+        return new Promise((resolve, reject) => {
+            if (window.faceapi) { faceApiReady = true; return resolve(true); }
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js';
+            s.onload = () => { faceApiReady = !!window.faceapi; resolve(faceApiReady); };
+            s.onerror = () => reject(new Error('Failed to load face-api.js'));
+            document.head.appendChild(s);
+        });
+    }
+    async function loadModels() {
+        if (modelsLoaded) return true;
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+        modelsLoaded = true;
+        return true;
+    }
+
+    function eyeAspectRatio(eye) {
+        if (!eye || eye.length < 6) return 0;
+        const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+        const v1 = d(eye[1], eye[5]);
+        const v2 = d(eye[2], eye[4]);
+        const h  = d(eye[0], eye[3]);
+        return h ? (v1 + v2) / (2 * h) : 0;
+    }
+
+    // ---------- Storage ----------
+    function loadDescriptor() {
+        try {
+            const raw = localStorage.getItem(FACE_KEY);
+            if (!raw) return null;
+            const arr = JSON.parse(raw);
+            if (!Array.isArray(arr) || arr.length !== 128) return null;
+            return new Float32Array(arr);
+        } catch (e) { return null; }
+    }
+    function saveDescriptor(desc) {
+        try { localStorage.setItem(FACE_KEY, JSON.stringify(Array.from(desc))); } catch (e) {}
+    }
+    function loadPin() {
+        try { return localStorage.getItem(PIN_KEY) || null; } catch (e) { return null; }
+    }
+    function savePin(pin) {
+        try { localStorage.setItem(PIN_KEY, pin); } catch (e) {}
+    }
+    function euclidean(a, b) {
+        let s = 0;
+        for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; }
+        return Math.sqrt(s);
+    }
+
+    // ---------- Lock visuals ----------
+function showLock() {
+    if (locked) return;
+    locked = true;
+    overlay.classList.add('active');
+    animImg.src = SCAN_IMG;
+    animWrap.classList.add('show');
+    lockPinWrap.style.display = storedPin ? 'flex' : 'none';
+}
+function hideLock() {
+    if (!locked) return;
+    locked = false;
+    overlay.classList.remove('active');
+    animWrap.classList.remove('show');
+    lockPinWrap.style.display = 'none';
+    lockPinInput.value = '';
+    lockPinError.textContent = '';
+}
+    async function detectDescriptor(video) {
+        if (!faceapi || !video || video.readyState !== 4) return null;
+        const res = await faceapi
+            .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+        if (!res) return null;
+        const lEAR = eyeAspectRatio(res.landmarks.getLeftEye());
+        const rEAR = eyeAspectRatio(res.landmarks.getRightEye());
+        return { descriptor: res.descriptor, eyesOpen: lEAR > 0.18 && rEAR > 0.18 };
+    }
+
+    // ---------- Scanning loop ----------
+    async function scanLoop() {
+        if (!enabled) return;
+        if (unlocking) { loopId = requestAnimationFrame(scanLoop); return; }
+
+        try {
+            // Only Face ID is checked in the live loop. PIN is a manual escape hatch.
+            if (storedDescriptor) {
+                const det = await detectDescriptor(hiddenVid);
+                let matched = false;
+                if (det && det.eyesOpen) {
+                    matched = euclidean(storedDescriptor, det.descriptor) < MATCH_THRESHOLD;
+                }
+                if (matched) {
+                    if (!locked) holdStart = 0;
+                    else if (!holdStart) holdStart = Date.now();
+                    else if (Date.now() - holdStart > 1000) triggerUnlockAnimation();
+                } else {
+                    holdStart = 0;
+                    if (!locked) showLock();
+                }
+            } else if (!storedPin) {
+                // No credentials at all — remain locked
+                if (!locked) showLock();
+            }
+        } catch (e) { /* silent */ }
+
+        loopId = requestAnimationFrame(scanLoop);
+    }
+
+    function triggerUnlockAnimation() {
+        if (unlocking) return;
+        unlocking = true;
+        animImg.src = SUCCESS_GIF;
+        animWrap.classList.add('show');
+        setTimeout(() => {
+    hideLock();
+    unlocking = false;
+    holdStart = 0;
+    if (disabledByPin) {
+        disabledByPin = false;
+        // Auto-disable eye lock after PIN unlock
+        if (typeof disable === 'function') disable();
+    }
+}, 1800);
+    }
+
+    async function getCamera() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Camera API not available (needs HTTPS or localhost).');
+        }
+        return await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 360 } },
+            audio: false
+        });
+    }
+
+    // ---------- Setup screen ----------
+    async function showSetup() {
+        hideLock();
+        setupOverlay.classList.add('active');
+        setupStatus.textContent = 'Starting camera…';
+        setupBtn.disabled = true;
+        setupBtn.textContent = 'Capture Face ID';
+        pinInput.value = '';
+        pinWrap.classList.add('show');
+
+        // If a PIN already exists, show it in the input
+        const existingPin = loadPin();
+        if (existingPin) pinInput.value = existingPin;
+
+        try {
+            if (setupStream) { setupStream.getTracks().forEach(t => t.stop()); setupStream = null; }
+            setupStream = await getCamera();
+            setupVideo.srcObject = setupStream;
+            await setupVideo.play();
+
+            if (!faceApiReady) await loadFaceApiScript();
+            await loadModels();
+
+            setupStatus.textContent = 'Look straight at the camera, then tap Capture.';
+            setupBtn.disabled = false;
+        } catch (err) {
+            setupStatus.textContent = 'Camera error: ' + (err.message || err);
+            // Still allow PIN setup without camera
+            setupBtn.disabled = true;
+        }
+    }
+
+    function closeSetup() {
+        setupOverlay.classList.remove('active');
+        if (setupStream) { setupStream.getTracks().forEach(t => t.stop()); setupStream = null; }
+        setupVideo.srcObject = null;
+    }
+
+    setupBtn.addEventListener('click', async () => {
+        setupBtn.disabled = true;
+        setupBtn.textContent = 'Capturing…';
+        setupStatus.textContent = 'Hold still…';
+
+        // Save PIN first (may be blank)
+        const pinVal = (pinInput.value || '').trim();
+if (!/^\d{4,8}$/.test(pinVal)) {
+    setupStatus.textContent = 'A PIN of 4–8 digits is required.';
+    setupBtn.disabled = false; setupBtn.textContent = 'Capture Face ID';
+    return;
+}
+savePin(pinVal);
+
+        try {
+            await new Promise(r => setTimeout(r, 500));
+            const det = await detectDescriptor(setupVideo);
+            if (!det) {
+                setupStatus.textContent = (pinVal ? 'PIN saved. ' : '') + 'No face detected — try again.';
+                setupBtn.disabled = false; setupBtn.textContent = 'Capture Face ID';
+                return;
+            }
+            if (!det.eyesOpen) {
+                setupStatus.textContent = (pinVal ? 'PIN saved. ' : '') + 'Open your eyes and try again.';
+                setupBtn.disabled = false; setupBtn.textContent = 'Capture Face ID';
+                return;
+            }
+            storedDescriptor = det.descriptor;
+            saveDescriptor(storedDescriptor);
+            storedPin = pinVal || null;
+            setupStatus.textContent = (pinVal ? 'PIN + Face ID saved ✓' : 'Face ID enrolled ✓');
+            setTimeout(() => {
+                closeSetup();
+                if (!enabled) startEnabledFlow();
+            }, 700);
+        } catch (err) {
+            setupStatus.textContent = 'Capture failed: ' + (err.message || err);
+            setupBtn.disabled = false; setupBtn.textContent = 'Capture Face ID';
+        }
+    });
+
+    // Reset button → opens choice modal
+    resetBtn.addEventListener('click', () => {
+        resetChoice.classList.add('active');
+    });
+    resetCancelBtn.addEventListener('click', () => resetChoice.classList.remove('active'));
+
+    resetFaceBtn.addEventListener('click', () => {
+        localStorage.removeItem(FACE_KEY);
+        storedDescriptor = null;
+        resetChoice.classList.remove('active');
+        setupStatus.textContent = 'Face ID cleared. PIN preserved.';
+    });
+    resetPinBtn.addEventListener('click', () => {
+        localStorage.removeItem(PIN_KEY);
+        storedPin = null;
+        pinInput.value = '';
+        resetChoice.classList.remove('active');
+        setupStatus.textContent = 'PIN cleared. Face ID preserved.';
+    });
+    resetBothBtn.addEventListener('click', () => {
+        localStorage.removeItem(FACE_KEY);
+        localStorage.removeItem(PIN_KEY);
+        storedDescriptor = null;
+        storedPin = null;
+        pinInput.value = '';
+        resetChoice.classList.remove('active');
+        setupStatus.textContent = 'Face ID and PIN cleared.';
+    });
+
+    // ---------- Enable / disable ----------
+    async function startEnabledFlow() {
+        try {
+            const s = await getCamera();
+            stream = s;
+            hiddenVid.srcObject = s;
+            await hiddenVid.play();
+
+            if (!faceApiReady) await loadFaceApiScript();
+            await loadModels();
+
+            enabled = true;
+            btn.textContent = 'Eye Lock: ON';
+            btn.style.color = '#7cffa0';
+            showLock();
+            scanLoop();
+            showNotifyBanner('Eye Lock enabled');
+        } catch (err) {
+            const msg = (err && err.name === 'NotAllowedError')
+                ? 'Camera permission denied.'
+                : 'Eye Lock failed: ' + (err.message || err);
+            showNotifyBanner(msg);
+            console.warn(err);
+            if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        }
+    }
+
+    async function enable() {
+        storedDescriptor = loadDescriptor();
+        storedPin = loadPin();
+        // If neither is stored, or user hasn't set up Face ID, show setup
+        if (!storedDescriptor && !storedPin) { showSetup(); return; }
+        await startEnabledFlow();
+    }
+
+    function disable() {
+    enabled = false;
+    unlocking = false;
+    holdStart = 0;
+    if (loopId) { cancelAnimationFrame(loopId); loopId = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    hiddenVid.srcObject = null;
+    hideLock();
+    btn.textContent = 'Eye Lock';
+    btn.style.color = '';
+    showNotifyBanner('Eye Lock disabled');
+}
+window.__eyeLockDisable = disable;   // <-- add this line
+lockPinBtn.addEventListener('click', () => {
+    const val = (lockPinInput.value || '').trim();
+    if (!storedPin) { lockPinError.textContent = 'No PIN set.'; return; }
+    if (val === storedPin) {
+        disabledByPin = true;
+        triggerUnlockAnimation();
+    } else {
+        lockPinError.textContent = 'Incorrect PIN.';
+        lockPinInput.value = '';
+        lockPinInput.focus();
+    }
+});
+lockPinInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); lockPinBtn.click(); }
+});
+    // ---------- Header buttons ----------
+    const actions = document.querySelector('.header-actions');
+    if (!actions) return;
+    const btn = document.createElement('button');
+    btn.id = 'eyeLockBtn';
+    btn.className = 'button-clear';
+    btn.textContent = 'Eye Lock';
+    btn.addEventListener('click', () => (enabled ? disable() : enable()));
+
+    const resetHeaderBtn = document.createElement('button');
+    resetHeaderBtn.id = 'faceResetHeaderBtn';
+    resetHeaderBtn.className = 'button-clear';
+    resetHeaderBtn.textContent = 'Reset Face ID';
+    resetHeaderBtn.addEventListener('click', () => {
+        disable();
+        resetChoice.classList.add('active');
+    });
+
+    const signout = document.getElementById('signoutBtn');
+    if (signout) {
+        actions.insertBefore(btn, signout);
+        actions.insertBefore(resetHeaderBtn, signout);
+    } else {
+        actions.appendChild(btn);
+        actions.appendChild(resetHeaderBtn);
+    }
+})();
 </script>
 
 </body>
 </html>
+
+
+
+
+
+
