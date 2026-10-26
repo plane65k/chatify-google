@@ -2925,12 +2925,19 @@ savePin(pinVal);
         setupStatus.textContent = 'Face ID cleared. PIN preserved.';
     });
     resetPinBtn.addEventListener('click', () => {
-        localStorage.removeItem(PIN_KEY);
-        storedPin = null;
-        pinInput.value = '';
-        resetChoice.classList.remove('active');
-        setupStatus.textContent = 'PIN cleared. Face ID preserved.';
-    });
+    const newPin = prompt('Enter a new PIN (4–8 digits):');
+    if (newPin === null) return; // user cancelled
+    const clean = (newPin || '').trim();
+    if (!/^\d{4,8}$/.test(clean)) {
+        alert('PIN must be 4–8 digits. PIN was not changed.');
+        return;
+    }
+    savePin(clean);
+    storedPin = clean;
+    pinInput.value = clean;
+    resetChoice.classList.remove('active');
+    setupStatus.textContent = 'PIN updated successfully.';
+});
     resetBothBtn.addEventListener('click', () => {
         localStorage.removeItem(FACE_KEY);
         localStorage.removeItem(PIN_KEY);
@@ -2988,7 +2995,34 @@ savePin(pinVal);
     btn.style.color = '';
     showNotifyBanner('Eye Lock disabled');
 }
-window.__eyeLockDisable = disable;   // <-- add this line
+window.__eyeLockDisable = disable;  
+// Pause camera when tab is hidden, resume when visible again
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        // Stop the camera track so the OS light goes off, but keep `enabled`
+        // true and the overlay showing — the app stays locked.
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        hiddenVid.srcObject = null;
+        if (loopId) { cancelAnimationFrame(loopId); loopId = null; }
+        // Force the lock overlay to stay visible with the scanning GIF
+        if (enabled) showLock();
+    } else if (document.visibilityState === 'visible') {
+        // Re-acquire the camera and restart the scan loop if eye lock is on
+        if (enabled && !stream) {
+            (async () => {
+                try {
+                    const s = await getCamera();
+                    stream = s;
+                    hiddenVid.srcObject = s;
+                    await hiddenVid.play();
+                    if (!loopId) scanLoop();
+                } catch (e) { /* silent */ }
+            })();
+        }
+    }
+});
+
+ // <-- add this line
 lockPinBtn.addEventListener('click', () => {
     const val = (lockPinInput.value || '').trim();
     if (!storedPin) { lockPinError.textContent = 'No PIN set.'; return; }
@@ -3035,6 +3069,7 @@ lockPinInput.addEventListener('keydown', (e) => {
 
 </body>
 </html>
+
 
 
 
